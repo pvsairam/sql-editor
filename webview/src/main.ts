@@ -4,7 +4,7 @@ import { el, fmtMs, fmtNum, prettyValue } from './util.js';
 
 interface VsCodeApi {
   postMessage(msg: FromWebview): void;
-  getState(): { wrap?: boolean; record?: boolean } | undefined;
+  getState(): { wrap?: boolean; record?: boolean; dates?: boolean } | undefined;
   setState(s: unknown): void;
 }
 declare function acquireVsCodeApi(): VsCodeApi;
@@ -33,6 +33,7 @@ const ICONS: Record<string, string> = {
   chevron: '<path d="M6 9l6 6 6-6"/>',
   warn: '<path d="M12 4l9 16H3zM12 10v4m0 3v.01"/>',
   check: '<path d="M5 12l5 5 9-10"/>',
+  cal: '<path d="M5 6h14v14H5zM5 10h14M9 4v4M15 4v4"/>',
   fit: '<path d="M4 12h16M4 12l3-3m-3 3l3 3M20 12l-3-3m3 3l-3 3M4 5v14M20 5v14"/>',
   pin: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"/>'
 };
@@ -61,13 +62,16 @@ let activeId: string | undefined;
 let settings: ViewSettings = { wrapText: false, maxCellLength: 5000, fetchSize: 1000, dateFormat: 'raw' };
 const saved = vscode.getState() ?? {};
 let wrap = saved.wrap ?? false;
+/** toggle in the toolbar: show dates formatted (true) or exactly as the database returned them (false, default) */
+let datesFormatted = saved.dates ?? false;
+const dateMode = (): ViewSettings['dateFormat'] => (datesFormatted ? (!settings.dateFormat || settings.dateFormat === 'raw' ? 'MM/DD/YYYY' : settings.dateFormat) : 'raw');
 let recordOn = saved.record ?? false;
 let quickText = '';
 let columnFilters = false;
 let tick: number | undefined;
 
 const send = (m: FromWebview) => vscode.postMessage(m);
-const persist = () => vscode.setState({ wrap, record: recordOn });
+const persist = () => vscode.setState({ wrap, record: recordOn, dates: datesFormatted });
 
 // ------------------------------------------------------------------------------ helpers
 
@@ -275,7 +279,7 @@ function ensureGrid(rv: RunView): Grid {
         }
       }
     });
-    rv.grid.setOptions({ wrap: wrap || settings.wrapText, maxCell: settings.maxCellLength, dateFormat: settings.dateFormat });
+    rv.grid.setOptions({ wrap: wrap || settings.wrapText, maxCell: settings.maxCellLength, dateFormat: dateMode() });
   }
   return rv.grid;
 }
@@ -452,6 +456,19 @@ function renderToolbar(): void {
     right.append(
       button('Copy', 'copy', 'Copy the selection (Ctrl+C) or choose a format', (e) => copyMenu(rv, e.currentTarget as HTMLElement), 'secondary'),
       button('Export', 'export', 'Export to a file', (e) => exportMenu(rv, e.currentTarget as HTMLElement), 'secondary'),
+      ...(rv.grid?.hasDateColumns()
+        ? [
+            button('', 'cal', datesFormatted ? 'Dates are formatted - click to show the raw database text' : 'Dates are raw (as returned by the database) - click to format them', () => {
+              datesFormatted = !datesFormatted;
+              persist();
+              for (const r of runs.values()) {
+                r.grid?.setOptions({ dateFormat: dateMode() });
+                r.grid?.refit();
+              }
+              refresh();
+            }, datesFormatted ? 'icon on' : 'icon')
+          ]
+        : []),
       button('', 'fit', 'Fit all columns to their content (double-click a column border to fit one)', () => rv.grid?.fitAll(), 'icon'),
       button('', 'record', 'Record view: all columns of the selected row', () => {
         recordOn = !recordOn;
@@ -462,7 +479,7 @@ function renderToolbar(): void {
         wrap = !wrap;
         persist();
         for (const r of runs.values()) {
-          r.grid?.setOptions({ wrap: wrap || settings.wrapText, dateFormat: settings.dateFormat });
+          r.grid?.setOptions({ wrap: wrap || settings.wrapText, dateFormat: dateMode() });
         }
         refresh();
       }, wrap ? 'icon on' : 'icon')
@@ -856,7 +873,7 @@ window.addEventListener('message', (ev: MessageEvent<ToWebview>) => {
       settings = m.settings;
       renderToolbar();
       for (const rv of runs.values()) {
-        rv.grid?.setOptions({ wrap: wrap || settings.wrapText, maxCell: settings.maxCellLength, dateFormat: settings.dateFormat });
+        rv.grid?.setOptions({ wrap: wrap || settings.wrapText, maxCell: settings.maxCellLength, dateFormat: dateMode() });
       }
       refresh();
       break;

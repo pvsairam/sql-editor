@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.4.1
+- **Dates toggle** in the results toolbar (calendar icon, shown when a result has date columns): raw database text by default, click to show formatted dates (format from `fusionSqlDev.results.dateFormat`, `MM/DD/YYYY` when that is `raw`). The choice is remembered; columns re-fit when you toggle.
+
 ## 2.4.0
 - **Dates show the raw database text by default** (`fusionSqlDev.results.dateFormat` = `raw`); `MM/DD/YYYY`, `DD/MM/YYYY` and `YYYY-MM-DD` remain available.
 - **Smarter column auto-fit**: columns are sized from the header and the widest values across up to 1,000 rows (the top 2% outliers are ignored so one long description does not stretch a column), capped at 560 px. Columns re-fit as more rows are fetched, unless you resized that column yourself. New toolbar button *Fit all columns*; double-click a column border to fit one.

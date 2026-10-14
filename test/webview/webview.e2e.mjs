@@ -94,8 +94,13 @@ await test('numeric columns are right-aligned, text left', async () => {
 
 const cell = (r, c) => page.locator(`.cell[data-r="${r}"][data-c="${c}"]`);
 
-await test('ISO dates display as MM/DD/YYYY (time only when present), copy uses the displayed text, filter finds both forms', async () => {
-  assert.equal(await page.textContent('.cell[data-r="0"][data-c="4"]'), '01/02/2024');
+await test('dates: raw by default; toolbar toggle formats them (time only when present); copy uses the displayed text; filter finds both forms', async () => {
+  assert.equal(await page.textContent('.cell[data-r="0"][data-c="4"]'), '2024-01-02T00:00:00.000+00:00', 'raw by default');
+  await cell(0, 4).click();
+  await page.keyboard.press('Control+c');
+  assert.equal((await lastCopy()).text, '2024-01-02T00:00:00.000+00:00');
+  await page.click('button[title^="Dates are raw"]');
+  await page.waitForFunction(() => document.querySelector('.cell[data-r="0"][data-c="4"]')?.textContent === '01/02/2024');
   await cell(0, 4).click();
   await page.keyboard.press('Control+c');
   assert.equal((await lastCopy()).text, '01/02/2024');
@@ -346,11 +351,14 @@ await page.screenshot({ path: process.env.SHOT ?? '/tmp/claude-0/grid.png' });
 await test('no console or page errors', async () => assert.deepEqual(errors, []));
 
 await test('auto-fit: widths follow the data (short ids narrow, long text wider, outliers capped) and re-fit on append', async () => {
-  await post({ type: 'settings', settings: { wrapText: false, maxCellLength: 5000, fetchSize: 1000, dateFormat: 'raw' } });
   await post({ type: 'run-start', run: { runId: 'rw', title: 'fit', sql: 'select 1', connectionName: 'DEV', environment: 'DEV', status: 'running', startedAt: Date.now(), elapsedMs: 0, columns: [], rows: [], hasMore: false, loading: true }, drop: [] });
   const data = Array.from({ length: 200 }, (_, i) => [String(i % 10), 'Employee number ' + i, 'x'.repeat(i === 7 ? 3000 : 12), '2026-10-14T03:50:08.000+00:00']);
   await post({ type: 'run-rows', runId: 'rw', columns: ['ID', 'FULL_NAME', 'NOTE', 'CREATED'], rows: data, append: false, hasMore: true, elapsedMs: 5 });
   await page.waitForSelector('.pane:not(.hidden) .hcell');
+  if (await page.$('button[title^="Dates are formatted"]')) {
+    await page.click('button[title^="Dates are formatted"]');
+  }
+  await page.waitForFunction(() => document.querySelector('.pane:not(.hidden) .cell[data-c="3"]')?.textContent?.includes('T03:50'));
   const w = () => page.$$eval('.pane:not(.hidden) .hcell', (h) => h.map((x) => Math.round(x.getBoundingClientRect().width)));
   const a = await w();
   assert.ok(a[0] < a[1] && a[1] < a[3], `widths ${a}`);

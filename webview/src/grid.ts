@@ -203,6 +203,9 @@ export class Grid {
   cell(viewRow: number, col: number): string {
     return this.rows[this.view[viewRow]]?.[col] ?? '';
   }
+  hasDateColumns(): boolean {
+    return this.cols.some((c) => c.date);
+  }
   display(viewRow: number, col: number): string {
     return this.shown(this.cell(viewRow, col), this.cols[col]);
   }
@@ -437,6 +440,17 @@ export class Grid {
     const body = widths.length === 0 ? 0 : widths.length > 50 ? widths[Math.floor(widths.length * 0.98)] : widths[widths.length - 1];
     c.width = Math.round(Math.min(MAX_W, Math.max(MIN_W, header, body)));
     this.layoutColumns();
+  }
+
+  /** Re-fit the columns the user has not resized by hand. */
+  refit(): void {
+    this.cols.forEach((c, i) => {
+      if (!c.userSized) {
+        this.autosize(i, 2000);
+      }
+    });
+    this.buildHeader();
+    this.schedule(true);
   }
 
   /** Re-fit every column (toolbar button). */
