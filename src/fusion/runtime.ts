@@ -236,6 +236,82 @@ export function buildCatalogArchive(spec: RuntimeSpec): Buffer {
   ]);
 }
 
+/**
+ * A native BI catalog archive (".catalog"), the format produced by Catalog > Download / Archive and
+ * accepted by Catalog > Unarchive. Layout (reverse-engineered from a working FusionQuery.catalog):
+ * zlib( u32 16, 4 x [u32 len + bytes] header, then per item [u16 0][u32 len + JSON metadata]
+ * ([u16 1][u64 len + content])?, finally u16 2 ).
+ */
+export function buildCatalogFile(spec: RuntimeSpec, owner: string): Buffer {
+  const paths = runtimePaths(spec);
+  const sha = (b: Buffer) => require('crypto').createHash('sha256').update(b).digest('hex') as string;
+  const orig = (p: string) => p.replace(/^\/~/, '/users/');
+  const build = 'Build 20.3.1.16.1';
+  const now = String(Date.now());
+  const meta = (path: string, type: number, props: Record<string, string>, extra?: Record<string, unknown>) =>
+    Buffer.from(
+      JSON.stringify({
+        Attributes: type === 4 ? 8 : 0,
+        CatalogArchiveOptions: 0,
+        InternalProperties: {},
+        ItemName: path.slice(path.lastIndexOf('/') + 1),
+        ItemType: type,
+        ObjectSignature: '',
+        OriginalPath: orig(path),
+        WCProperties: { Build: build, 'bip:AUTHOR': owner, ...props },
+        ...extra
+      }),
+      'utf8'
+    );
+  const str = (b: Buffer) => {
+    const h = Buffer.alloc(4);
+    h.writeUInt32LE(b.length);
+    return Buffer.concat([h, b]);
+  };
+  const u32 = (n: number) => {
+    const h = Buffer.alloc(4);
+    h.writeUInt32LE(n);
+    return h;
+  };
+  const u16 = (n: number) => {
+    const h = Buffer.alloc(2);
+    h.writeUInt16LE(n);
+    return h;
+  };
+  const content = (b: Buffer) => {
+    const h = Buffer.alloc(8);
+    h.writeBigUInt64LE(BigInt(b.length));
+    return Buffer.concat([u16(1), h, b]);
+  };
+  const out: Buffer[] = [
+    u32(16),
+    str(Buffer.from('20.3.1.18.1')),
+    str(Buffer.from('fusion-sql-dev')),
+    str(Buffer.from('{"CatalogPhysicalPath" : "","IsAccountStriped" : false,"IsSrcFrom11gBICS" : false}')),
+    str(Buffer.from(JSON.stringify({ AccountType: 0, ID: owner })))
+  ];
+  const item = (m: Buffer, c?: Buffer) => out.push(u16(0), str(m), ...(c ? [content(c)] : []));
+  const xpt = Buffer.from(XPT_PNG_B64, 'base64');
+  const xptz = xptZip();
+  const T = { 'bip:OBJ_TYPE': 'Folder', 'bip:MODIFIED': now };
+  item(meta(paths.rootFolder, 1, T));
+  item(meta(paths.versionFolder, 1, T));
+  item(meta(paths.reportPath, 1, { 'bip:MODIFIED': now, 'bip:OBJ_TYPE': 'ReportItem', 'bip:propertyMap': '0', compositeSignature: '.xdo' }));
+  item(meta(paths.dmPath, 1, { 'bip:MODIFIED': now, 'bip:OBJ_TYPE': 'ReportItem', compositeSignature: '.xdm' }));
+  const child = (parent: string, name: string, sig: string, data: Buffer, hash = false) => {
+    const m = meta(`${parent}/${name}`, 4, hash ? { 'bip:contentHashCode': sha(data) } : {}, { ObjectSignature: sig });
+    item(m, data);
+  };
+  child(paths.dmPath, '_datamodel.xdm', 'bipxdmmetadata', Buffer.from(dataModelXml(spec), 'utf8'));
+  child(paths.reportPath, '_report.xdo', 'bipxdometadata', Buffer.from(reportXml(paths.dmPath), 'utf8'));
+  child(paths.dmPath, 'sample.xml', 'bipxdmmetadata', Buffer.from(SAMPLE_XML, 'utf8'));
+  child(paths.reportPath, 'Default.xpt.png', 'bipxdometadata', xpt, true);
+  child(paths.reportPath, 'Default_en_US.xpt', 'bipxdometadata', xptz, true);
+  child(paths.reportPath, 'xdo.cfg', 'bipxdometadata', Buffer.from(XDO_CFG, 'utf8'));
+  out.push(u16(2));
+  return zlib.deflateSync(Buffer.concat(out));
+}
+
 /** Rewrite `<dataModel url="...">` inside a report archive so it points at our data model. */
 export function patchReportZip(reportZip: Buffer, dmPath: string): Buffer {
   const entries: ZipEntry[] = readZip(reportZip).map((e) => {

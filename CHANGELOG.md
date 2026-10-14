@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.2
+
+- **Save Helper Catalog File…** now writes a native `FusionSqlDevHelper.catalog` (same format as Catalog > Download, decoded from a working export) for Catalog > Unarchive, alongside `dm.xdmz`/`csv.xdoz` and the `.xdrz` bundle.
+
 ## 2.5.1
 
 - **Save Helper Files…** now writes `dm.xdmz` and `csv.xdoz` separately (plus the bundle). Upload them in the BI Publisher Catalog as a Data Model and a Report, since the Catalog UI does not import our `.xdrz` bundle as a catalog file.

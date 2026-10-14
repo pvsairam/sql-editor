@@ -20,7 +20,7 @@ import { StatusBarController } from './statusBar';
 import { Connection, HistoryEntry } from './model';
 import { errorMessage, FusionError } from './fusion/errors';
 import { settings } from './config';
-import { buildCatalogArchive, buildRuntime } from './fusion/runtime';
+import { buildCatalogArchive, buildCatalogFile, buildRuntime } from './fusion/runtime';
 
 const DOCS = 'https://github.com/pvsairam/sql-editor/blob/main/docs';
 
@@ -408,9 +408,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const out = (n: string) => vscode.Uri.joinPath(folder[0], n);
     await vscode.workspace.fs.writeFile(out('dm.xdmz'), art.dataModelZip);
     await vscode.workspace.fs.writeFile(out('csv.xdoz'), art.reportZip);
+    await vscode.workspace.fs.writeFile(out('FusionSqlDevHelper.catalog'), buildCatalogFile(spec, c.username));
     await vscode.workspace.fs.writeFile(out('FusionSqlDevHelper.xdrz'), buildCatalogArchive(spec));
     const dir = `${spec.catalogRoot}/FusionSqlDev/v2`;
-    const pick = await vscode.window.showInformationMessage(`Saved dm.xdmz and csv.xdoz. In BI Publisher: Catalog → open ${dir} (create the folders FusionSqlDev and v2 if missing) → Upload: dm.xdmz as a Data Model, then csv.xdoz as a Report. Then use Test Connection.`, 'Reveal Files', 'Test Connection');
+    const pick = await vscode.window.showInformationMessage(`Saved FusionSqlDevHelper.catalog (use Catalog → My Folders → Unarchive) plus dm.xdmz / csv.xdoz as a fallback (Upload into ${dir}). Then use Test Connection.`, 'Reveal Files', 'Test Connection');
     if (pick === 'Reveal Files') {
       await vscode.commands.executeCommand('revealFileInOS', out('csv.xdoz'));
     } else if (pick === 'Test Connection') {

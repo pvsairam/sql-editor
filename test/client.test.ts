@@ -1,10 +1,11 @@
+import * as zlib from 'zlib';
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { FusionClient } from '../src/fusion/bip';
 import { FusionError } from '../src/fusion/errors';
 import { BasicSession, TokenSession } from '../src/auth/sessions';
 import { MockFusion, MockOptions } from './helpers/mockFusion';
-import { buildRuntime, buildCatalogArchive } from '../src/fusion/runtime';
+import { buildRuntime, buildCatalogArchive, buildCatalogFile } from '../src/fusion/runtime';
 import { readZip } from '../src/fusion/zip';
 
 async function withMock<T>(opts: MockOptions, fn: (m: MockFusion) => Promise<T>): Promise<T> {
@@ -234,4 +235,40 @@ test('an explicit helper path (connection setting) is tried first', async () => 
     const c = new FusionClient({ baseUrl: m.url, auth: new BasicSession('jdoe', 's3cret'), knownReportPath: '/Custom/Team/csv.xdo', timeoutMs: 10000 });
     assert.equal(await c.discoverRuntime(), '/Custom/Team/csv.xdo');
   });
+});
+
+test('buildCatalogFile follows the native .catalog layout', () => {
+  const raw = zlib.inflateSync(buildCatalogFile({ catalogRoot: '/~jdoe@x.com', dataSource: 'ApplicationDB_FSCM' }, 'jdoe@x.com'));
+  let i = 0;
+  assert.equal(raw.readUInt32LE(i), 16);
+  i += 4;
+  const str = () => {
+    const l = raw.readUInt32LE(i);
+    const v = raw.subarray(i + 4, i + 4 + l);
+    i += 4 + l;
+    return v;
+  };
+  for (let k = 0; k < 4; k++) {
+    str();
+  }
+  const items: Array<{ name: string; type: number; path: string; size: number }> = [];
+  for (;;) {
+    const flag = raw.readUInt16LE(i);
+    i += 2;
+    if (flag === 2) {
+      break;
+    }
+    assert.equal(flag, 0);
+    const j = JSON.parse(str().toString());
+    let size = -1;
+    if (i < raw.length && raw.readUInt16LE(i) === 1) {
+      size = Number(raw.readBigUInt64LE(i + 2));
+      i += 10 + size;
+    }
+    items.push({ name: j.ItemName, type: j.ItemType, path: j.OriginalPath, size });
+  }
+  assert.equal(i, raw.length);
+  assert.deepEqual(items.map((x) => x.name), ['FusionSqlDev', 'v2', 'csv.xdo', 'dm.xdm', '_datamodel.xdm', '_report.xdo', 'sample.xml', 'Default.xpt.png', 'Default_en_US.xpt', 'xdo.cfg']);
+  assert.equal(items[2].path, '/users/jdoe@x.com/FusionSqlDev/v2/csv.xdo');
+  assert.ok(items.slice(4).every((x) => x.size > 0));
 });
