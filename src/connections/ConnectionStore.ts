@@ -110,7 +110,7 @@ export class ConnectionStore {
     return this.ctx.secrets.get(secretKey.pasted(id));
   }
   setPasted(id: string, v: string): Thenable<void> {
-    return this.ctx.secrets.store(secretKey.pasted(id), v);
+    return v ? this.ctx.secrets.store(secretKey.pasted(id), v) : this.ctx.secrets.delete(secretKey.pasted(id));
   }
 
   tokenStore(id: string): TokenStore {

@@ -13,7 +13,7 @@ import { OAuthFlow, TokenSet, TokenStore } from '../auth/oauth';
 export interface FormData {
   name: string;
   environment: EnvironmentType;
-  auth: 'basic' | 'oauth' | 'token';
+  auth: 'basic' | 'oauth' | 'token' | 'browser';
   url: string;
   username: string;
   password: string;
@@ -24,6 +24,8 @@ export interface FormData {
   clientSecret: string;
   tokenKind: 'bearer' | 'cookie';
   token: string;
+  browserKind: 'auto' | 'chrome' | 'edge' | 'brave' | 'custom';
+  browserPath: string;
   dataSource: string;
   catalogRoot: string;
   allowInsecureTls: boolean;
@@ -65,6 +67,8 @@ function toForm(c?: Connection): FormData {
     clientSecret: '',
     tokenKind: c?.tokenKind ?? 'bearer',
     token: '',
+    browserKind: c?.browser?.kind ?? 'auto',
+    browserPath: c?.browser?.path ?? '',
     dataSource: c?.dataSource ?? '',
     catalogRoot: c?.catalogRoot ?? '',
     allowInsecureTls: c?.allowInsecureTls ?? false
@@ -104,6 +108,9 @@ export function validateForm(f: FormData, editing: boolean, hasPassword: boolean
       return 'Client secret is required for client credentials.';
     }
   }
+  if (f.auth === 'browser' && f.browserKind === 'custom' && !f.browserPath.trim()) {
+    return 'Enter the full path of the browser executable.';
+  }
   if (f.catalogRoot.trim() && !f.catalogRoot.trim().startsWith('/')) {
     return 'Catalog folder must start with / (e.g. /Shared Folders/Custom).';
   }
@@ -124,6 +131,7 @@ function draftConnection(id: string, f: FormData, prev?: Connection): Connection
     allowInsecureTls: f.allowInsecureTls || undefined,
     runtimeConsent: prev?.runtimeConsent,
     oauth: f.auth === 'oauth' ? { issuer: f.issuer.trim().replace(/\/+$/, ''), clientId: f.clientId.trim(), scope: f.scope.trim(), flow: f.flow } : undefined,
+    browser: f.auth === 'browser' ? { kind: f.browserKind, path: f.browserKind === 'custom' ? f.browserPath.trim() : undefined } : undefined,
     tokenKind: f.auth === 'token' ? f.tokenKind : undefined,
     reportPath: prev && prev.url === normalizeBaseUrl(f.url) && prev.username === f.username.trim() ? prev.reportPath : undefined
   };
@@ -154,6 +162,7 @@ export function openConnectionForm(ctx: vscode.ExtensionContext, store: Connecti
   const post = (m: ToForm) => void panel.webview.postMessage(m);
   let validationTokens: MemoryTokens | undefined; // tokens obtained while validating an SSO setup are kept for the save
   let validationKey = '';
+  let validationCookie: string | undefined;
 
   const sessionFor = async (f: FormData, conn: Connection): Promise<AuthSession> => {
     if (f.auth === 'basic') {
@@ -169,6 +178,10 @@ export function openConnectionForm(ctx: vscode.ExtensionContext, store: Connecti
         throw new FusionError('config', 'Paste a token or cookie first.');
       }
       return new TokenSession(conn.username, f.tokenKind, t.replace(/^bearer\s+/i, ''));
+    }
+    if (f.auth === 'browser') {
+      validationCookie ??= (await store.getPasted(id)) || (await manager.captureBrowserSession(conn));
+      return new TokenSession(conn.username, 'cookie', validationCookie);
     }
     const key = JSON.stringify([f.issuer, f.clientId, f.scope, f.flow]);
     if (!validationTokens || validationKey !== key) {
@@ -243,7 +256,7 @@ export function openConnectionForm(ctx: vscode.ExtensionContext, store: Connecti
         }
         const conn = draftConnection(id, m.form, existing);
         const identityChanged =
-          !!existing && (existing.auth !== conn.auth || existing.url !== conn.url || existing.oauth?.issuer !== conn.oauth?.issuer || existing.oauth?.clientId !== conn.oauth?.clientId || existing.oauth?.scope !== conn.oauth?.scope);
+          !!existing && (existing.auth !== conn.auth || existing.url !== conn.url || existing.browser?.kind !== conn.browser?.kind || existing.oauth?.issuer !== conn.oauth?.issuer || existing.oauth?.clientId !== conn.oauth?.clientId || existing.oauth?.scope !== conn.oauth?.scope);
         await store.save(conn);
         if (identityChanged) {
           await store.tokenStore(id).clear();
@@ -259,6 +272,9 @@ export function openConnectionForm(ctx: vscode.ExtensionContext, store: Connecti
             await store.tokenStore(id).save(validationTokens.tokens);
           }
         }
+        if (m.form.auth === 'browser' && validationCookie) {
+          await store.setPasted(id, validationCookie);
+        }
         if (m.form.auth === 'token' && m.form.token.trim()) {
           await store.setPasted(id, m.form.token.trim().replace(/^bearer\s+/i, ''));
         }
@@ -267,7 +283,8 @@ export function openConnectionForm(ctx: vscode.ExtensionContext, store: Connecti
           await store.setActive(id);
         }
         panel.dispose();
-        const next = conn.auth === 'oauth' && !(await store.tokenStore(id).load()) ? 'Sign In' : 'New Worksheet';
+        const needsSignIn = (conn.auth === 'oauth' && !(await store.tokenStore(id).load())) || (conn.auth === 'browser' && !(await store.getPasted(id)));
+        const next = needsSignIn ? 'Sign In' : 'New Worksheet';
         const pick = await vscode.window.showInformationMessage(`Connection "${conn.name}" ${existing ? 'updated' : 'created'}.`, next);
         if (pick === 'Sign In') {
           await vscode.commands.executeCommand('fusionSqlDev.signIn', id);

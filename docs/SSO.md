@@ -7,7 +7,8 @@ therefore supports three ways to sign in. Pick the first one that applies to you
 | # | Method | Needs | Best for |
 |---|---|---|---|
 | 1 | **Username & password** | A Fusion local password that works for API calls | Pods without enforced SSO, service accounts |
-| 2 | **Single Sign-On (OAuth)** | A one-time *integrated application* in the pod's IAM identity domain | SSO / MFA pods (recommended) |
+| 2a | **SSO - Browser session** | A Chromium browser (Chrome / Edge / Brave) | SSO / MFA pods, no admin help needed (recommended first try) |
+| 2b | **SSO - OAuth application** | A one-time *integrated application* in the pod's IAM identity domain | Teams that can register the app; refreshable tokens |
 | 3 | **Access token / session cookie** | A token or browser cookie you obtain yourself | Quick tests, break-glass |
 
 > **Status of this feature:** the OAuth flows (authorization code + PKCE, device code, client credentials, refresh)
@@ -25,7 +26,13 @@ count as a failed attempt. A genuinely wrong password is tried **exactly once**.
 
 If you still get *"The server returned a web page … Single Sign-On"*, use method 2.
 
-## 2. Single Sign-On (OAuth) - one-time setup (≈5 minutes, needs an IAM administrator)
+## 2a. SSO - Browser session
+
+*Add Connection → SSO → Browser session*, choose the browser, create. On first use (or *Sign In (SSO)…*) a window opens on your pod; sign in normally. The extension reads the session cookies for the pod through the browser's local DevTools port (bound to 127.0.0.1, private profile, random port), tests them against BI Publisher, closes the window and stores the cookie header in VS Code SecretStorage. When the session expires you are offered *Sign In* again.
+
+Not verified against a live pod: whether the pod's `/xmlpserver` accepts the browser session cookie. If it answers with a login page the message says so; then use 2b.
+
+## 2b. Single Sign-On (OAuth) - one-time setup (≈5 minutes, needs an IAM administrator)
 
 Fusion SaaS uses an Oracle IAM identity domain (formerly IDCS). In its console:
 

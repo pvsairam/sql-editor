@@ -362,13 +362,21 @@ await test('connection form: fields, auth methods, SSO section, validate + creat
   assert.equal(m.form.password, 's3cret');
   await form.evaluate(() => window.postMessage({ type: 'validation', ok: true, title: 'Connection works', steps: [{ label: 'Server reachable & signed in', ok: true }] }, '*'));
   await form.waitForSelector('.banner.ok');
-  await form.getByText('SSO (OAuth)').click();
+  assert.equal(await form.locator('.section').count(), 0, 'no stray token section for Local');
+  await form.getByText('SSO', { exact: true }).click();
+  await form.waitForSelector('.section');
+  assert.match(await form.textContent('.section'), /Browser[\s\S]*private profile/);
+  assert.equal(await form.locator('select').nth(1).inputValue(), 'browser');
+  await form.locator('select').nth(1).selectOption('oauth');
   await form.waitForSelector('.section');
   assert.match(await form.textContent('.section'), /Identity domain URL[\s\S]*Client ID[\s\S]*Scope[\s\S]*localhost:53682\/callback/);
+  await form.locator('select').nth(1).selectOption('browser');
+  await form.locator('.section select').selectOption('edge');
   await form.screenshot({ path: process.env.SHOT4 ?? '/tmp/claude-0/form.png' });
   await form.locator('button.primary').click();
   m = (await fsent()).filter((x) => x.type === 'save').pop();
-  assert.equal(m.form.auth, 'oauth');
+  assert.equal(m.form.auth, 'browser');
+  assert.equal(m.form.browserKind, 'edge');
   assert.equal(m.form.name, 'DEV');
 });
 

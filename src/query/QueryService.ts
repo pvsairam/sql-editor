@@ -268,7 +268,7 @@ export class QueryService implements vscode.Disposable {
     this.results.fail(rec, { message: fe?.message ?? errorMessage(e), hint: fe?.hint, kind: fe?.kind ?? 'unknown' });
     this.history.add({ sql: original, timestamp: started, durationMs: Date.now() - started, status: 'error', connectionId: conn.id, connectionName: conn.name, error: (fe?.message ?? errorMessage(e)).slice(0, 500) });
     if (fe && (fe.kind === 'auth' || fe.kind === 'sso')) {
-      const actions = conn.auth === 'oauth' ? ['Sign In', 'Edit Connection'] : ['Edit Connection'];
+      const actions = conn.auth === 'oauth' || conn.auth === 'browser' ? ['Sign In', 'Edit Connection'] : ['Edit Connection'];
       void vscode.window.showErrorMessage(`${conn.name}: ${fe.message}`, ...actions).then((pick) => {
         if (pick === 'Sign In') {
           void vscode.commands.executeCommand('fusionSqlDev.signIn', conn.id);

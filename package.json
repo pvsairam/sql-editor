@@ -1,8 +1,8 @@
 {
   "name": "fusion-sql-dev",
   "displayName": "Fusion SQL DEV",
-  "description": "Oracle Fusion Cloud SQL worksheet for VS Code: run SQL against your Fusion pod through BI Publisher, with SSO, a fast result grid, schema browser, history and Copilot help.",
-  "version": "2.0.1",
+  "description": "Oracle Fusion Cloud SQL worksheet for VS Code: run SQL against your Fusion pod through BI Publisher, with browser-session SSO, a fast result grid, schema browser, history and Copilot help.",
+  "version": "2.1.0",
   "publisher": "fusion-dev",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -499,12 +499,12 @@
         },
         {
           "command": "fusionSqlDev.signIn",
-          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection.*oauth/",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection\\.(oauth|browser)/",
           "group": "1_connect@3"
         },
         {
           "command": "fusionSqlDev.signOut",
-          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection.*oauth/",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection\\.(oauth|browser)/",
           "group": "1_connect@4"
         },
         {

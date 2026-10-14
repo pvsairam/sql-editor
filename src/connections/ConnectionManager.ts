@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import { FusionClient } from '../fusion/bip';
 import { FusionError } from '../fusion/errors';
 import { AuthSession, Logger } from '../fusion/types';
 import { Connection } from '../model';
@@ -7,6 +6,10 @@ import { ConnectionStore } from './ConnectionStore';
 import { OAuthClient, TokenStore, jwtExpiry } from '../auth/oauth';
 import { BasicSession, OAuthSession, TokenSession } from '../auth/sessions';
 import { settings } from '../config';
+import { FusionClient } from '../fusion/bip';
+import { browserLogin, findBrowser } from '../auth/browserLogin';
+import * as os from 'os';
+import * as path from 'path';
 
 interface Cached {
   client: FusionClient;
@@ -22,7 +25,8 @@ export class ConnectionManager {
 
   constructor(
     private readonly store: ConnectionStore,
-    private readonly log: Logger
+    private readonly log: Logger,
+    private readonly storageDir: string = ''
   ) {}
 
   invalidate(id?: string): void {
@@ -36,7 +40,7 @@ export class ConnectionManager {
   }
 
   private signature(c: Connection): string {
-    return JSON.stringify([c.url, c.username, c.auth, c.dataSource, c.catalogRoot, c.allowInsecureTls, c.oauth, c.tokenKind, settings.timeoutMs, settings.loopbackPort, settings.redirectHost]);
+    return JSON.stringify([c.url, c.username, c.auth, c.dataSource, c.catalogRoot, c.allowInsecureTls, c.oauth, c.browser, c.tokenKind, settings.timeoutMs, settings.loopbackPort, settings.redirectHost]);
   }
 
   /** Build an OAuth client for a (possibly unsaved) connection; the token store is injectable for "Validate". */
@@ -110,6 +114,16 @@ export class ConnectionManager {
         }
         return new OAuthSession(c.username, o);
       }
+      case 'browser': {
+        const cookie = await this.store.getPasted(c.id);
+        if (!cookie) {
+          if (!interactive) {
+            throw new FusionError('auth', 'You are not signed in.', { hint: 'Right-click the connection and choose "Sign In (SSO)…".' });
+          }
+          await this.signIn(c);
+        }
+        return new TokenSession(c.username, 'cookie', (await this.store.getPasted(c.id)) ?? '');
+      }
       case 'token': {
         let raw = await this.store.getPasted(c.id);
         if (!raw) {
@@ -147,8 +161,16 @@ export class ConnectionManager {
   // ------------------------------------------------------------------------ sign-in
 
   async signIn(c: Connection): Promise<boolean> {
+    if (c.auth === 'browser') {
+      const cookie = await this.captureBrowserSession(c);
+      await this.store.setPasted(c.id, cookie);
+      this.invalidate(c.id);
+      this.emitter.fire();
+      void vscode.window.setStatusBarMessage(`Signed in to ${c.name}`, 4000);
+      return true;
+    }
     if (c.auth !== 'oauth') {
-      void vscode.window.showInformationMessage('Sign-in is only used by "Single Sign-On (OAuth)" connections.');
+      void vscode.window.showInformationMessage('Sign-in is only used by Single Sign-On connections.');
       return false;
     }
     const o = await this.oauthClient(c);
@@ -163,7 +185,39 @@ export class ConnectionManager {
     return true;
   }
 
+  /** Open the user's browser on the pod, wait for SSO to finish and return the session Cookie header. */
+  async captureBrowserSession(c: Connection): Promise<string> {
+    const exe = findBrowser(c.browser?.kind ?? 'auto', c.browser?.path);
+    const verifyClient = (cookie: string) =>
+      new FusionClient({ baseUrl: c.url, auth: new TokenSession(c.username, 'cookie', cookie), catalogRoot: c.catalogRoot, allowInsecureTls: c.allowInsecureTls, log: this.log, timeoutMs: 30000 });
+    return vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Sign in to ${c.name} in the browser window that just opened…`, cancellable: true },
+      async (_p, token) => {
+        const ac = new AbortController();
+        token.onCancellationRequested(() => ac.abort());
+        return browserLogin({
+          baseUrl: c.url,
+          executable: exe,
+          profileDir: path.join(this.storageDir || os.tmpdir(), 'browser-profiles', c.id),
+          signal: ac.signal,
+          log: this.log,
+          verify: async (cookie) => {
+            try {
+              await verifyClient(cookie).objectExists(`${c.catalogRoot ?? `/~${c.username}`}/__fusion_sql_probe__`);
+              return true;
+            } catch (e) {
+              return !(e instanceof FusionError && (e.kind === 'auth' || e.kind === 'sso'));
+            }
+          }
+        });
+      }
+    );
+  }
+
   async signOut(c: Connection): Promise<void> {
+    if (c.auth === 'browser') {
+      await this.store.setPasted(c.id, '');
+    }
     if (c.auth === 'oauth') {
       await (await this.oauthClient(c)).signOut();
     }
@@ -214,6 +268,10 @@ export class ConnectionManager {
         } catch {
           return `${c.username} · SSO`;
         }
+      }
+      case 'browser': {
+        const raw = await this.store.getPasted(c.id);
+        return `${c.username} · SSO · ${raw ? 'signed in' : 'signed out'}`;
       }
       case 'token': {
         const raw = await this.store.getPasted(c.id);

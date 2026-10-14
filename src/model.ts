@@ -24,6 +24,8 @@ export interface Connection {
     scope: string;
     flow: OAuthFlow;
   };
+  /** browser-session SSO: which browser to open */
+  browser?: { kind: 'auto' | 'chrome' | 'edge' | 'brave' | 'custom'; path?: string };
   /** token auth: how the pasted value is sent */
   tokenKind?: 'bearer' | 'cookie';
   /** Decided once per connection: may we upload the helper report to the pod? */

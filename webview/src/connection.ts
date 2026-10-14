@@ -3,7 +3,7 @@ import { el } from './util.js';
 interface FormData {
   name: string;
   environment: 'DEV' | 'TEST' | 'UAT' | 'PROD' | 'OTHER';
-  auth: 'basic' | 'oauth' | 'token';
+  auth: 'basic' | 'oauth' | 'token' | 'browser';
   url: string;
   username: string;
   password: string;
@@ -14,6 +14,8 @@ interface FormData {
   clientSecret: string;
   tokenKind: 'bearer' | 'cookie';
   token: string;
+  browserKind: 'auto' | 'chrome' | 'edge' | 'brave' | 'custom';
+  browserPath: string;
   dataSource: string;
   catalogRoot: string;
   allowInsecureTls: boolean;
@@ -84,14 +86,15 @@ function render(): void {
   card.append(row);
 
   const method = el('div', 'radios');
-  for (const [v, l] of [['basic', 'Local (user & password)'], ['oauth', 'SSO (OAuth)'], ['token', 'Access token / cookie']] as const) {
+  const group = form.auth === 'basic' ? 'basic' : form.auth === 'token' ? 'token' : 'sso';
+  for (const [v, l] of [['basic', 'Local (user & password)'], ['sso', 'SSO'], ['token', 'Access token / cookie']] as const) {
     const lab = el('label', 'radio');
     const r = el('input');
     r.type = 'radio';
     r.name = 'auth';
-    r.checked = form.auth === v;
+    r.checked = group === v;
     r.addEventListener('change', () => {
-      form.auth = v;
+      form.auth = v === 'sso' ? (form.auth === 'oauth' ? 'oauth' : 'browser') : v;
       render();
     });
     lab.append(r, el('span', undefined, l));
@@ -104,9 +107,33 @@ function render(): void {
 
   if (form.auth === 'basic') {
     card.append(field('Password', text('password', editing && hasPassword ? 'leave empty to keep the saved password' : '', 'password'), { required: !(editing && hasPassword) }));
+  } else if (form.auth === 'browser' || form.auth === 'oauth') {
+    const mode = el('select');
+    for (const [v, l] of [['browser', 'Browser session - sign in with your company login (no admin setup)'], ['oauth', 'OAuth application - needs an IAM integrated application']] as const) {
+      const o = el('option', undefined, l);
+      o.value = v;
+      mode.append(o);
+    }
+    mode.value = form.auth;
+    mode.addEventListener('change', () => {
+      form.auth = mode.value as FormData['auth'];
+      render();
+    });
+    card.append(field('SSO type', mode));
+  }
+  if (form.auth === 'browser') {
+    const box = el('div', 'section');
+    const kind = select('browserKind', [['auto', 'Automatic (Chrome, Edge or Brave)'], ['chrome', 'Google Chrome'], ['edge', 'Microsoft Edge'], ['brave', 'Brave'], ['custom', 'Custom path…']]);
+    kind.addEventListener('change', render);
+    box.append(field('Browser', kind, { required: true }));
+    if (form.browserKind === 'custom') {
+      box.append(field('Browser executable', text('browserPath', 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe')));
+    }
+    box.append(el('div', 'hint', 'On first use a browser window opens on your pod. Sign in as usual (MFA included); the window closes by itself and the session is kept in VS Code secure storage. The browser uses its own private profile, so your normal browsing is untouched.'));
+    card.append(box);
   } else if (form.auth === 'oauth') {
     const box = el('div', 'section');
-    box.append(el('div', 'section-title', 'Single Sign-On'));
+    box.append(el('div', 'section-title', 'OAuth application'));
     box.append(field('Identity domain URL', text('issuer', 'https://idcs-xxxxxxxx.identity.oraclecloud.com'), { required: true }));
     const r2 = el('div', 'row2');
     r2.append(field('Client ID', text('clientId'), { required: true }), field('Flow', select('flow', [['authorization_code', 'Browser sign-in'], ['device_code', 'Device code (remote / SSH)'], ['client_credentials', 'Client credentials (service)']])));
@@ -115,7 +142,7 @@ function render(): void {
     box.append(field('Client secret', text('clientSecret', hasSecret ? 'saved - leave empty to keep' : 'only for confidential applications', 'password')));
     box.append(el('div', 'hint', `Register this redirect URL in the identity domain application: ${redirectUrl}`));
     card.append(box);
-  } else {
+  } else if (form.auth === 'token') {
     const box = el('div', 'section');
     box.append(field('Token type', select('tokenKind', [['bearer', 'Bearer access token (JWT)'], ['cookie', 'Browser session cookie']])));
     box.append(field('Token / cookie value', text('token', hasToken ? 'saved - leave empty to keep' : 'paste here', 'password')));

@@ -9,7 +9,7 @@ export interface Logger {
 
 export const nullLogger: Logger = { debug() {}, info() {}, warn() {}, error() {} };
 
-export type AuthMethod = 'basic' | 'oauth' | 'token';
+export type AuthMethod = 'basic' | 'oauth' | 'token' | 'browser';
 
 /** Resolved credentials for one connection. Implementations may refresh tokens on demand. */
 export interface AuthSession {

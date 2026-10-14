@@ -26,7 +26,7 @@ const DOCS = 'https://github.com/pvsairam/sql-editor/blob/main/docs';
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const log = new OutputLogger();
   const store = new ConnectionStore(ctx, log);
-  const manager = new ConnectionManager(store, log);
+  const manager = new ConnectionManager(store, log, ctx.globalStorageUri.fsPath);
   const history = new HistoryStore(ctx, log);
   const schema = new SchemaService(manager, log);
   const results = new ResultsView(ctx);

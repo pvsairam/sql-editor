@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.0
+- **SSO via your browser (new, recommended for SSO pods)**: choose *SSO* → *Browser session* and pick Chrome, Edge, Brave or a custom path (like SQL Connect). A window opens on your pod, you sign in with your company login (MFA included), the window closes itself and the session is stored in VS Code secure storage. No IAM administrator or OAuth application needed. A private browser profile keeps your IdP session, so later sign-ins are one click. *OAuth application* remains available as the second SSO type.
+- New logo.
+
 ## 2.0.1
 
 Feedback round from the first testers.
