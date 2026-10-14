@@ -6,7 +6,7 @@ import { classifyResponse, createFolderBody, deleteObjectBody, envelope, getFold
 import { FusionError, SSO_HINT } from './errors';
 import { HttpResponse, httpRequest } from './http';
 import { parseDelimited } from './csv';
-import { buildRuntime, DEFAULT_DATA_SOURCE, encodeSql, extractFromArchive, legacyReportPaths, patchReportZip, runtimePaths } from './runtime';
+import { buildCatalogFile, buildRuntime, DEFAULT_DATA_SOURCE, encodeSql, extractFromArchive, legacyReportPaths, patchReportZip, runtimePaths } from './runtime';
 import { AuthSession, AuthStyle, Logger, nullLogger, QueryPage } from './types';
 import { prepareStatement, wrapForPaging } from '../sql/prepare';
 
@@ -375,9 +375,68 @@ export class FusionClient {
 
   /** Create the helper data model + report on the pod (idempotent). */
   async installRuntime(signal?: AbortSignal): Promise<string> {
-    const art = buildRuntime({ catalogRoot: this.catalogRoot, dataSource: this.dataSource });
-    await this.deployZips(art.rootFolder, art.versionFolder, art.dmPath, art.reportPath, art.dataModelZip, art.reportZip);
+    const spec = { catalogRoot: this.catalogRoot, dataSource: this.dataSource };
+    const art = buildRuntime(spec);
+    try {
+      await this.deployZips(art.rootFolder, art.versionFolder, art.dmPath, art.reportPath, art.dataModelZip, art.reportZip);
+    } catch (e) {
+      // The SOAP CatalogService refuses to create reports for some users ("Security violation").
+      // The Catalog page's Unarchive goes through BI Presentation Services (saw.dll) instead, which
+      // those same users are allowed to use - do exactly what the browser does.
+      if (!(e instanceof FusionError && e.code === 'SECURITY_VIOLATION')) {
+        throw e;
+      }
+      this.log.info('Report upload refused (Security violation); trying Catalog Unarchive (saw.dll) instead.');
+      try {
+        await this.unarchiveCatalog(buildCatalogFile(spec, this.auth.username), signal);
+      } catch (e2) {
+        this.log.info(`Unarchive fallback failed: ${e2 instanceof Error ? e2.message : String(e2)}`);
+        throw e;
+      }
+    }
     return this.verifyInstalled(art.reportPath, signal);
+  }
+
+  /** The catalog folder `Unarchive` extracts into: "/~jdoe" is "/users/jdoe" in Presentation Services. */
+  private unarchiveTarget(): string {
+    return this.catalogRoot.replace(/^\/~/, '/users/');
+  }
+
+  /** POST a .catalog archive to the same endpoint the Catalog page's Unarchive dialog uses. */
+  async unarchiveCatalog(archive: Buffer, signal?: AbortSignal): Promise<void> {
+    const boundary = '----FusionSqlDev' + Math.random().toString(16).slice(2);
+    const field = (name: string, value: string) => Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`);
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="archive"; filename="FusionSqlDevHelper.catalog"\r\nContent-Type: application/octet-stream\r\n\r\n`),
+      archive,
+      Buffer.from('\r\n'),
+      field('replReadOnly', 'None'),
+      field('repl', 'none'),
+      field('aclReadOnly', 'Inherit'),
+      field('acl', 'inherit'),
+      field('Folder', this.unarchiveTarget()),
+      field('ajaxType', 'iframe'),
+      field('urlGenerator', 'qualified'),
+      field('_scid', 'now' + Math.random().toString(36).slice(2, 14)),
+      Buffer.from(`--${boundary}--\r\n`)
+    ]);
+    const headers: Record<string, string> = { 'Content-Type': `multipart/form-data; boundary=${boundary}`, Accept: 'text/html,*/*' };
+    const authz = await this.auth.authorization(signal);
+    if (authz) {
+      headers['Authorization'] = authz;
+    }
+    const cookie = this.auth.cookie?.();
+    if (cookie) {
+      headers['Cookie'] = cookie;
+    }
+    const res = await httpRequest({ url: `${this.baseUrl}/analytics/saw.dll?unArchiveCatalog`, method: 'POST', headers, body, timeoutMs: 120000, signal, allowInsecureTls: this.insecure });
+    this.log.debug(`POST saw.dll?unArchiveCatalog -> HTTP ${res.status} (${res.body.length} chars)`);
+    if (res.status >= 300 || /<form[^>]+(login|j_security)/i.test(res.body)) {
+      throw new FusionError('sso', `Catalog Unarchive was not accepted (HTTP ${res.status}); the Presentation Services endpoint needs a browser-style session.`, { status: res.status, hint: 'Use the "Browser session" sign-in, or import the saved helper file manually (Catalog → Unarchive).' });
+    }
+    if (/error|exception|not authorized|permission denied/i.test(res.body.replace(/<script[\s\S]*?<\/script>/gi, ''))) {
+      throw new FusionError('permission', `Catalog Unarchive failed: ${res.body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300)}`);
+    }
   }
 
   /** Install from a user supplied .xdrz archive (fallback if the generated objects are not accepted). */

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.3
+
+- Helper install now falls back automatically to the Catalog page's own Unarchive call (`/analytics/saw.dll?unArchiveCatalog`) when BI Publisher's SOAP CatalogService refuses to create the report ("Security violation"). Endpoint and form fields taken from a real browser capture; it needs an auth the Presentation Services accept (Basic or a browser session).
+
 ## 2.5.2
 
 - **Save Helper Catalog File…** now writes a native `FusionSqlDevHelper.catalog` (same format as Catalog > Download, decoded from a working export) for Catalog > Unarchive, alongside `dm.xdmz`/`csv.xdoz` and the `.xdrz` bundle.

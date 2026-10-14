@@ -217,7 +217,7 @@ test('removeRuntime deletes both objects and the client rediscovers nothing', as
 });
 
 test('report creation denied (Security violation): clear explanation + manual-upload workaround; a hand-imported helper is then found', async () => {
-  await withMock({ denyReports: true }, async (m) => {
+  await withMock({ denyReports: true, denyUnarchive: true }, async (m) => {
     const c = basic(m);
     await assert.rejects(c.installRuntime(), (e: FusionError) => e.kind === 'permission' && e.code === 'SECURITY_VIOLATION' && /REPORT/.test(e.hint ?? '') && /Save Helper Catalog File/.test(e.hint ?? ''));
     assert.ok(m.objects.has('/~jdoe/FusionSqlDev/v2/dm.xdm'), 'data model part was uploaded');
@@ -271,4 +271,13 @@ test('buildCatalogFile follows the native .catalog layout', () => {
   assert.deepEqual(items.map((x) => x.name), ['FusionSqlDev', 'v2', 'csv.xdo', 'dm.xdm', '_datamodel.xdm', '_report.xdo', 'sample.xml', 'Default.xpt.png', 'Default_en_US.xpt', 'xdo.cfg']);
   assert.equal(items[2].path, '/users/jdoe@x.com/FusionSqlDev/v2/csv.xdo');
   assert.ok(items.slice(4).every((x) => x.size > 0));
+});
+
+test('security violation on the report upload falls back to Catalog Unarchive (saw.dll) automatically', async () => {
+  await withMock({ denyReports: true }, async (m) => {
+    const c = basic(m);
+    const path = await c.installRuntime();
+    assert.equal(path, '/~jdoe/FusionSqlDev/v2/csv.xdo');
+    assert.deepEqual(m.unarchives, ['/users/jdoe']);
+  });
 });

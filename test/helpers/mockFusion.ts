@@ -28,6 +28,7 @@ export interface MockOptions {
   refuseOverwrite?: boolean;
   /** Data models may be uploaded but reports are refused (user lacks a BI authoring role). */
   denyReports?: boolean;
+  denyUnarchive?: boolean;
   /** Rows of table DEMO_T. */
   rows?: number;
 }
@@ -42,6 +43,8 @@ export class MockFusion {
   server!: http.Server;
   url = '';
   objects = new Map<string, UploadedObject>();
+  raw: Buffer = Buffer.alloc(0);
+  unarchives: string[] = [];
   folders = new Set<string>();
   requests: { path: string; op: string; auth?: string; bodyCreds: boolean; status: number }[] = [];
   failedLogins = 0;
@@ -59,6 +62,7 @@ export class MockFusion {
       readOnlyCatalog: false,
       refuseOverwrite: false,
       denyReports: false,
+      denyUnarchive: false,
       rows: 2500,
       ...opts
     };
@@ -71,7 +75,10 @@ export class MockFusion {
     this.server = http.createServer((req, res) => {
       const chunks: Buffer[] = [];
       req.on('data', (c: Buffer) => chunks.push(c));
-      req.on('end', () => this.handle(req, res, Buffer.concat(chunks).toString('utf8')));
+      req.on('end', () => {
+        this.raw = Buffer.concat(chunks);
+        this.handle(req, res, this.raw.toString('utf8'));
+      });
     });
     await new Promise<void>((r) => this.server.listen(0, '127.0.0.1', r));
     this.url = `http://127.0.0.1:${(this.server.address() as AddressInfo).port}`;
@@ -101,6 +108,53 @@ export class MockFusion {
     );
   }
 
+  /** Presentation Services Unarchive: parse the multipart upload and the native .catalog stream. */
+  private unarchive(res: http.ServerResponse, text: string): void {
+    const folder = /name="Folder"\r\n\r\n([^\r]*)/.exec(text)?.[1] ?? '';
+    if (this.o.denyUnarchive) {
+      res.writeHead(200, { 'Content-Type': 'text/html' }).end('<html><body>Error: not authorized to unarchive</body></html>');
+      return;
+    }
+    this.unarchives.push(folder);
+    const start = this.raw.indexOf('\r\n\r\n') + 4;
+    const end = this.raw.indexOf('\r\n--', start);
+    const cat = require('zlib').inflateSync(this.raw.subarray(start, end)) as Buffer;
+    let i = 4;
+    for (let k = 0; k < 4; k++) {
+      i += 4 + cat.readUInt32LE(i);
+    }
+    const byPath = new Map<string, Record<string, string>>();
+    const types = new Map<string, string>();
+    for (;;) {
+      const flag = cat.readUInt16LE(i);
+      i += 2;
+      if (flag === 2) {
+        break;
+      }
+      const l = cat.readUInt32LE(i);
+      const j = JSON.parse(cat.subarray(i + 4, i + 4 + l).toString());
+      i += 4 + l;
+      let data: Buffer | undefined;
+      if (i < cat.length && cat.readUInt16LE(i) === 1) {
+        const n = Number(cat.readBigUInt64LE(i + 2));
+        data = cat.subarray(i + 10, i + 10 + n);
+        i += 10 + n;
+      }
+      const full = String(j.OriginalPath).replace(/^\/users\//, '/~');
+      if (j.ItemType === 1 && /\.(xdo|xdm)$/.test(full)) {
+        types.set(full, full.endsWith('.xdo') ? 'xdoz' : 'xdmz');
+        byPath.set(full, {});
+      } else if (data) {
+        const parent = full.slice(0, full.lastIndexOf('/'));
+        byPath.get(parent)![j.ItemName] = data.toString('utf8');
+      }
+    }
+    for (const [p, files] of byPath) {
+      this.objects.set(p, { type: types.get(p)!, zip: Buffer.alloc(0), files });
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html' }).end('<html><body>Unarchive request is completed.</body></html>');
+  }
+
   private handle(req: http.IncomingMessage, res: http.ServerResponse, body: string): void {
     const path = req.url ?? '';
     const authz = req.headers['authorization'];
@@ -109,6 +163,10 @@ export class MockFusion {
     const bodyPass = /<v2:password>([^<]*)<\/v2:password>/.exec(body)?.[1] ?? '';
     const log = (status: number) => this.requests.push({ path, op, auth: authz, bodyCreds: !!bodyUser, status });
 
+    if (path.includes('saw.dll?unArchiveCatalog')) {
+      this.unarchive(res, body);
+      return;
+    }
     const isRest = path.includes('/services/rest/');
     const basicHeaderOk = authz === 'Basic ' + Buffer.from(`${this.o.user}:${this.o.pass}`).toString('base64');
     const bodyOk = bodyUser === this.o.user && bodyPass === this.o.pass;

@@ -2,7 +2,7 @@
   "name": "fusion-sql-dev",
   "displayName": "Fusion SQL DEV",
   "description": "Oracle Fusion Cloud SQL worksheet for VS Code: run SQL against your Fusion pod through BI Publisher, with browser-session SSO, a fast result grid, schema browser, history and Copilot help.",
-  "version": "2.5.2",
+  "version": "2.5.3",
   "publisher": "fusion-dev",
   "license": "MIT",
   "icon": "media/icon.png",
