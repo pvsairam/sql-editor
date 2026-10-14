@@ -413,6 +413,19 @@ test('table browser: four tabs (Columns focused), qualified names are quoted saf
   assert.equal(posted.find((m) => m.type === 'focus-run').runId, cols.runId);
 });
 
+test('chip follows the file in view, not the global active connection', async () => {
+  const doc = host.makeEditor('SELECT 1 FROM dual');
+  host.activeTextEditor = doc;
+  host.visibleTextEditors = [doc];
+  await run('fusionSqlDev.pickConnection', 'c3');
+  assert.equal(host.activeTextEditor.document.uri.toString(), doc.document.uri.toString());
+  const chip = posted.filter((m) => m.type === 'settings').pop();
+  assert.equal(chip.settings.connection.name, 'QA');
+  assert.deepEqual(chip.settings.connections.filter((c: any) => c.active).map((c: any) => c.name), ['QA']);
+  await run('fusionSqlDev.pickConnection', 'c1');
+  assert.equal(posted.filter((m) => m.type === 'settings').pop().settings.connection.name, 'DEV');
+});
+
 test('connection delete removes secrets; legacy import scrubs passwords', async () => {
   host.ui.buttons = (_m, items) => (items.includes('Delete') ? 'Delete' : undefined);
   await run('fusionSqlDev.deleteConnection', 'c2');

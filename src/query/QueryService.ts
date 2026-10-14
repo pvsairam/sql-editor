@@ -60,8 +60,19 @@ export class QueryService implements vscode.Disposable {
     return this.store.get(id) ?? this.store.active;
   }
 
+  private readonly bindEmitter = new vscode.EventEmitter<void>();
+  /** fires when a file is bound to another connection */
+  readonly onDidChangeBindings = this.bindEmitter.event;
+
+  /** The connection that applies to the SQL file in view (its own binding, else the active one). */
+  currentConnection(): Connection | undefined {
+    const ed = vscode.window.activeTextEditor?.document.languageId === 'sql' ? vscode.window.activeTextEditor : vscode.window.visibleTextEditors.find((e) => e.document.languageId === 'sql');
+    return this.connectionForDoc(ed?.document.uri);
+  }
+
   async bindDocToConnection(uri: vscode.Uri, id: string): Promise<void> {
     await this.ctx.workspaceState.update(KEY_DOC_CONN, { ...this.docConnections(), [uri.toString()]: id });
+    this.bindEmitter.fire();
   }
 
   /** Resolve (or ask for) the connection to use for this editor. */

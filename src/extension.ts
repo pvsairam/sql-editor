@@ -76,13 +76,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     registerChatParticipant(ctx, store, schema, results, log)
   );
 
-  const syncChip = () =>
+  const syncChip = () => {
+    const cur = query.currentConnection();
     results.setConnection(
-      store.active ? { name: store.active.name, environment: store.active.environment } : undefined,
-      store.list().map((c) => ({ id: c.id, name: c.name, environment: c.environment, active: c.id === store.activeId }))
+      cur ? { name: cur.name, environment: cur.environment } : undefined,
+      store.list().map((c) => ({ id: c.id, name: c.name, environment: c.environment, active: c.id === cur?.id }))
     );
+  };
   syncChip();
-  ctx.subscriptions.push(store.onDidChange(syncChip));
+  ctx.subscriptions.push(store.onDidChange(syncChip), query.onDidChangeBindings(syncChip), vscode.window.onDidChangeActiveTextEditor(syncChip));
 
   // keep clients fresh when settings change
   ctx.subscriptions.push(

@@ -10,10 +10,11 @@ export class StatusBarController implements vscode.Disposable {
 
   constructor(
     private readonly store: ConnectionStore,
-    query: QueryService
+    private readonly query: QueryService
   ) {
     this.subs = [
       store.onDidChange(() => this.render()),
+      query.onDidChangeBindings(() => this.render()),
       query.onDidChangeRunning((r) => {
         this.running = r;
         this.render();
@@ -24,7 +25,7 @@ export class StatusBarController implements vscode.Disposable {
   }
 
   private render(): void {
-    const c = this.store.active;
+    const c = this.query.currentConnection() ?? this.store.active;
     const inSql = vscode.window.activeTextEditor?.document.languageId === 'sql';
     if (!c && !inSql) {
       this.item.hide();

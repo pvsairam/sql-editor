@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.3.2
+- The connection chip (results toolbar) and the status bar now show the connection of the **SQL file in view** (its own binding), not only the globally active one, so they always match the CodeLens and where the query runs.
+
 ## 2.3.1
 - The connection chip in the results toolbar now opens a **dropdown right under it** (list of connections with environment, plus *Add connection…*); picking one applies it to the SQL file in view.
 
