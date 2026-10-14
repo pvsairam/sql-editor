@@ -49,7 +49,7 @@ export function registerResultsHandlers(results: ResultsView, query: QueryServic
             break;
           }
           case 'switch-connection':
-            await vscode.commands.executeCommand('fusionSqlDev.switchConnection');
+            await vscode.commands.executeCommand('fusionSqlDev.pickConnection', msg.id);
             break;
           case 'set-fetch-size':
             query.setRowLimit(msg.value);

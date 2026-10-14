@@ -344,7 +344,19 @@ function connChip(): HTMLElement {
   const b = el('button', 'chip');
   b.title = 'Active connection - click to switch';
   b.append(el('span', `envdot ${c?.environment ?? ''}`), el('span', undefined, c ? c.name : 'Select connection'), icon('chevron'));
-  b.addEventListener('click', () => send({ type: 'switch-connection' }));
+  b.addEventListener('click', () => {
+    const list = settings.connections ?? [];
+    if (list.length === 0) {
+      send({ type: 'switch-connection' });
+      return;
+    }
+    const r = b.getBoundingClientRect();
+    showMenu(r.left, r.bottom + 2, [
+      ...list.map((c) => ({ label: `${c.active ? '✓ ' : '    '}${c.name}`, hint: c.environment, action: () => send({ type: 'switch-connection', id: c.id }) })),
+      { separator: true },
+      { label: '    Add connection…', action: () => send({ type: 'switch-connection' }) }
+    ]);
+  });
   return b;
 }
 

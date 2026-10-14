@@ -311,11 +311,15 @@ await test(`100k rows load in-page (${Math.round(loadMs)} ms), sort and filter s
 
 // ---- bind dialog, rows box, pin ----
 await test('connection chip shows the active connection and asks the host to switch', async () => {
-  await post({ type: 'settings', settings: { wrapText: false, maxCellLength: 5000, fetchSize: 1000, dateFormat: 'MM/DD/YYYY', connection: { name: 'ECGA NEW', environment: 'PROD' } } });
+  await post({ type: 'settings', settings: { wrapText: false, maxCellLength: 5000, fetchSize: 1000, dateFormat: 'MM/DD/YYYY', connection: { name: 'ECGA NEW', environment: 'PROD' }, connections: [{ id: 'c1', name: 'ECGA NEW', environment: 'PROD', active: true }, { id: 'c2', name: 'DEVECGA', environment: 'DEV', active: false }] } });
   await page.waitForSelector('.chip .envdot.PROD');
   assert.match(await page.textContent('.chip'), /ECGA NEW/);
   await page.locator('.chip').click();
-  assert.ok((await sent()).some((x) => x.type === 'switch-connection'));
+  const box = await page.locator('.chip').boundingBox();
+  const menu = await page.locator('.menu').boundingBox();
+  assert.ok(Math.abs(menu.x - box.x) < 8 && menu.y >= box.y + box.height, 'dropdown sits right under the chip');
+  await page.locator('.menu .item', { hasText: 'DEVECGA' }).click();
+  assert.ok((await sent()).some((x) => x.type === 'switch-connection' && x.id === 'c2'));
 });
 await test('Rows box accepts 1..1,000,000 and tells the host', async () => {
   const box = page.locator('.rows-input');

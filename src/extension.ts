@@ -76,7 +76,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     registerChatParticipant(ctx, store, schema, results, log)
   );
 
-  const syncChip = () => results.setConnection(store.active ? { name: store.active.name, environment: store.active.environment } : undefined);
+  const syncChip = () =>
+    results.setConnection(
+      store.active ? { name: store.active.name, environment: store.active.environment } : undefined,
+      store.list().map((c) => ({ id: c.id, name: c.name, environment: c.environment, active: c.id === store.activeId }))
+    );
   syncChip();
   ctx.subscriptions.push(store.onDidChange(syncChip));
 
@@ -245,6 +249,19 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     void vscode.window.setStatusBarMessage(`Active connection: ${c.name}`, 3000);
   });
 
+  /** Used by the results-toolbar dropdown: apply a connection to the SQL editor in view and make it active. */
+  reg('fusionSqlDev.pickConnection', async (id?: string) => {
+    if (!id) {
+      await vscode.commands.executeCommand('fusionSqlDev.switchConnection');
+      return;
+    }
+    const sqlEditor = vscode.window.visibleTextEditors.find((e) => e.document.languageId === 'sql');
+    if (sqlEditor) {
+      await query.bindDocToConnection(sqlEditor.document.uri, id);
+    }
+    await store.setActive(id);
+    schema.refresh(id);
+  });
   reg('fusionSqlDev.switchConnection', async (arg?: { uri?: vscode.Uri }) => {
     const all = store.list();
     if (all.length === 0) {

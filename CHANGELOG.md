@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.3.1
+- The connection chip in the results toolbar now opens a **dropdown right under it** (list of connections with environment, plus *Add connection…*); picking one applies it to the SQL file in view.
+
 ## 2.3.0
 - **Table browser**: in the Schema view, right-click a table/view (or use the inline button) → *Open Table*. Four result tabs open: **Columns** (type, nullability, primary key, column comments), **Constraints**, **Indexes** and **Data** (all rows via the Rows limit).
 - **Connection switcher in the results toolbar**: a chip with the active connection (colour-coded by environment); click to switch, like SQL Connect's dropdown.

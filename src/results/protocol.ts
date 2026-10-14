@@ -28,6 +28,7 @@ export interface ViewSettings {
   dateFormat: 'MM/DD/YYYY' | 'DD/MM/YYYY' | 'YYYY-MM-DD' | 'raw';
   /** active connection, shown as a switcher chip */
   connection?: { name: string; environment: string };
+  connections?: { id: string; name: string; environment: string; active: boolean }[];
 }
 
 export type BindType = 'VARCHAR2' | 'NUMBER' | 'DATE' | 'TIMESTAMP';
@@ -63,5 +64,5 @@ export type FromWebview =
   | { type: 'close-run'; runId: string }
   | { type: 'pin'; runId: string; pinned: boolean }
   | { type: 'set-fetch-size'; value: number }
-  | { type: 'switch-connection' }
+  | { type: 'switch-connection'; id?: string }
   | { type: 'log'; text: string };

@@ -2,7 +2,7 @@
   "name": "fusion-sql-dev",
   "displayName": "Fusion SQL DEV",
   "description": "Oracle Fusion Cloud SQL worksheet for VS Code: run SQL against your Fusion pod through BI Publisher, with browser-session SSO, a fast result grid, schema browser, history and Copilot help.",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "publisher": "fusion-dev",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -116,7 +116,7 @@
       },
       {
         "command": "fusionSqlDev.runOnConnections",
-        "title": "Run Statement on Multiple Connections\u2026",
+        "title": "Run Statement on Multiple Connections…",
         "category": "Fusion SQL",
         "icon": "$(layers)"
       },
@@ -138,20 +138,25 @@
         "category": "Fusion SQL"
       },
       {
+        "command": "fusionSqlDev.pickConnection",
+        "title": "Pick Connection",
+        "category": "Fusion SQL"
+      },
+      {
         "command": "fusionSqlDev.switchConnection",
-        "title": "Switch Connection\u2026",
+        "title": "Switch Connection…",
         "category": "Fusion SQL",
         "icon": "$(plug)"
       },
       {
         "command": "fusionSqlDev.addConnection",
-        "title": "Add Connection\u2026",
+        "title": "Add Connection…",
         "category": "Fusion SQL",
         "icon": "$(add)"
       },
       {
         "command": "fusionSqlDev.editConnection",
-        "title": "Edit Connection\u2026",
+        "title": "Edit Connection…",
         "category": "Fusion SQL",
         "icon": "$(edit)"
       },
@@ -180,7 +185,7 @@
       },
       {
         "command": "fusionSqlDev.signIn",
-        "title": "Sign In (SSO)\u2026",
+        "title": "Sign In (SSO)…",
         "category": "Fusion SQL",
         "icon": "$(sign-in)"
       },
@@ -192,7 +197,7 @@
       },
       {
         "command": "fusionSqlDev.setToken",
-        "title": "Set Access Token / Session Cookie\u2026",
+        "title": "Set Access Token / Session Cookie…",
         "category": "Fusion SQL"
       },
       {
@@ -203,7 +208,7 @@
       },
       {
         "command": "fusionSqlDev.importRuntimeFile",
-        "title": "Install Helper From a Catalog File (.xdrz)\u2026",
+        "title": "Install Helper From a Catalog File (.xdrz)…",
         "category": "Fusion SQL"
       },
       {
@@ -230,7 +235,7 @@
       },
       {
         "command": "fusionSqlDev.searchObjects",
-        "title": "Search Tables & Views\u2026",
+        "title": "Search Tables & Views…",
         "category": "Fusion SQL",
         "icon": "$(search)"
       },
@@ -294,7 +299,7 @@
       },
       {
         "command": "fusionSqlDev.searchHistory",
-        "title": "Search History\u2026",
+        "title": "Search History…",
         "category": "Fusion SQL",
         "icon": "$(search)"
       },
@@ -348,6 +353,10 @@
         {
           "command": "fusionSqlDev.cancelQuery",
           "when": "fusionSqlDev.queryRunning"
+        },
+        {
+          "command": "fusionSqlDev.pickConnection",
+          "when": "false"
         },
         {
           "command": "fusionSqlDev.editConnection",
