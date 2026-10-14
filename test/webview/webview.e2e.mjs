@@ -94,6 +94,20 @@ await test('numeric columns are right-aligned, text left', async () => {
 
 const cell = (r, c) => page.locator(`.cell[data-r="${r}"][data-c="${c}"]`);
 
+await test('ISO dates display as MM/DD/YYYY (time only when present), copy uses the displayed text, filter finds both forms', async () => {
+  assert.equal(await page.textContent('.cell[data-r="0"][data-c="4"]'), '01/02/2024');
+  await cell(0, 4).click();
+  await page.keyboard.press('Control+c');
+  assert.equal((await lastCopy()).text, '01/02/2024');
+  await post({ type: 'settings', settings: { wrapText: false, maxCellLength: 5000, fetchSize: 1000, dateFormat: 'YYYY-MM-DD' } });
+  await page.waitForFunction(() => document.querySelector('.cell[data-r="0"][data-c="4"]')?.textContent === '2024-01-02');
+  await post({ type: 'settings', settings: { wrapText: false, maxCellLength: 5000, fetchSize: 1000, dateFormat: 'MM/DD/YYYY' } });
+  await page.waitForFunction(() => document.querySelector('.cell[data-r="0"][data-c="4"]')?.textContent === '01/02/2024');
+  await page.fill('input.quick', '01/28/2024');
+  await page.waitForFunction(() => /of 5,000/.test(document.querySelector('.tb-info')?.textContent ?? ''));
+  await page.fill('input.quick', '');
+  await page.waitForFunction(() => !/ of /.test(document.querySelector('.tb-info')?.textContent ?? ''));
+});
 await test('click selects a cell; Ctrl+C sends the raw value to the host clipboard', async () => {
   await cell(1, 1).click();
   await page.waitForSelector('.cell.focus');

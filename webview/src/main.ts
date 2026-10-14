@@ -57,7 +57,7 @@ app.append(tabsEl, toolbarEl, contentEl, statusEl, toastEl, overlay);
 
 const runs = new Map<string, RunView>();
 let activeId: string | undefined;
-let settings: ViewSettings = { wrapText: false, maxCellLength: 5000, fetchSize: 1000 };
+let settings: ViewSettings = { wrapText: false, maxCellLength: 5000, fetchSize: 1000, dateFormat: 'MM/DD/YYYY' };
 const saved = vscode.getState() ?? {};
 let wrap = saved.wrap ?? false;
 let recordOn = saved.record ?? false;
@@ -274,7 +274,7 @@ function ensureGrid(rv: RunView): Grid {
         }
       }
     });
-    rv.grid.setOptions({ wrap: wrap || settings.wrapText, maxCell: settings.maxCellLength });
+    rv.grid.setOptions({ wrap: wrap || settings.wrapText, maxCell: settings.maxCellLength, dateFormat: settings.dateFormat });
   }
   return rv.grid;
 }
@@ -439,7 +439,7 @@ function renderToolbar(): void {
         wrap = !wrap;
         persist();
         for (const r of runs.values()) {
-          r.grid?.setOptions({ wrap: wrap || settings.wrapText });
+          r.grid?.setOptions({ wrap: wrap || settings.wrapText, dateFormat: settings.dateFormat });
         }
         refresh();
       }, wrap ? 'icon on' : 'icon')
@@ -590,7 +590,8 @@ function openCell(rv: RunView, row: number, col: number): void {
   const pv = prettyValue(value);
   const card = el('div', 'viewer');
   const head = el('div', 'viewer-head');
-  head.append(el('span', 'viewer-title', colName), el('span', 'viewer-sub', `row ${fmtNum(row + 1)} · ${fmtNum(value.length)} chars${pv.kind !== 'text' ? ` · ${pv.kind.toUpperCase()}` : ''}`));
+  const shownText = g.display(row, col);
+  head.append(el('span', 'viewer-title', colName), el('span', 'viewer-sub', `row ${fmtNum(row + 1)} · ${fmtNum(value.length)} chars${pv.kind !== 'text' ? ` · ${pv.kind.toUpperCase()}` : ''}${shownText !== value ? ` · raw: ${value}` : ''}`));
   const bodyEl = el('pre', 'viewer-body');
   bodyEl.textContent = value === '' ? '(empty / NULL)' : pv.text;
   const foot = el('div', 'viewer-foot');
@@ -831,7 +832,7 @@ window.addEventListener('message', (ev: MessageEvent<ToWebview>) => {
     case 'settings':
       settings = m.settings;
       for (const rv of runs.values()) {
-        rv.grid?.setOptions({ wrap: wrap || settings.wrapText, maxCell: settings.maxCellLength });
+        rv.grid?.setOptions({ wrap: wrap || settings.wrapText, maxCell: settings.maxCellLength, dateFormat: settings.dateFormat });
       }
       refresh();
       break;

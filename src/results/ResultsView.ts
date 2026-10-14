@@ -60,7 +60,7 @@ export class ResultsView implements vscode.WebviewViewProvider, vscode.Disposabl
   }
 
   private viewSettings(): ViewSettings {
-    return { wrapText: settings.wrapText, maxCellLength: settings.maxCellLength, fetchSize: this.rowLimit };
+    return { wrapText: settings.wrapText, maxCellLength: settings.maxCellLength, fetchSize: this.rowLimit, dateFormat: settings.dateFormat };
   }
 
   get rowLimit(): number {

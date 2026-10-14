@@ -170,6 +170,55 @@ export class QueryService implements vscode.Disposable {
     }
   }
 
+  /** Run the statement under the cursor (or the selection) on several connections at once, one result tab per connection. */
+  async runOnConnections(args?: RunArgs): Promise<void> {
+    const editor = this.editorFor(args);
+    if (!editor) {
+      return;
+    }
+    const doc = editor.document;
+    const text = args?.offset !== undefined ? statementAt(doc.getText(), args.offset, { blankLineEndsStatement: settings.blankLineEndsStatement })?.text : !editor.selection.isEmpty ? doc.getText(editor.selection) : statementAt(doc.getText(), doc.offsetAt(editor.selection.active), { blankLineEndsStatement: settings.blankLineEndsStatement })?.text;
+    if (!text?.trim()) {
+      void vscode.window.showInformationMessage('Nothing to run here. Put the cursor inside a SQL statement.');
+      return;
+    }
+    const all = this.store.list();
+    if (all.length < 2) {
+      void vscode.window.showInformationMessage('Add at least two connections to compare environments.');
+      return;
+    }
+    const current = this.connectionForDoc(doc.uri);
+    const picks = await vscode.window.showQuickPick(
+      all.map((c) => ({ label: c.name, description: `${c.environment} · ${c.username}`, detail: c.url, picked: c.id === current?.id, id: c.id })),
+      { canPickMany: true, title: 'Run on which connections?', placeHolder: 'Select two or more - results open side by side as separate tabs', ignoreFocusOut: true }
+    );
+    if (!picks || picks.length === 0) {
+      return;
+    }
+    const conns = picks.map((p) => this.store.get(p.id)).filter((c): c is Connection => !!c);
+    const prod = conns.filter((c) => c.environment === 'PROD' && !this.prodConfirmed.has(c.id));
+    if (prod.length) {
+      const ok = await vscode.window.showWarningMessage(`Run on ${prod.map((c) => c.name).join(', ')} (PROD)?`, { modal: true, detail: 'Queries are read-only, but they still consume production resources.' }, 'Run');
+      if (ok !== 'Run') {
+        return;
+      }
+      prod.forEach((c) => this.prodConfirmed.add(c.id));
+    }
+    let bound: string;
+    try {
+      const prepared = prepareStatement(text).sql;
+      const asked = await this.askBinds(prepared);
+      if (asked === undefined) {
+        return;
+      }
+      bound = asked;
+    } catch (e) {
+      void vscode.window.showErrorMessage(errorMessage(e));
+      return;
+    }
+    await Promise.all(conns.map((c, i) => this.executeOne(c, text, c.name, i > 0, bound)));
+  }
+
   private async askBinds(sql: string): Promise<string | undefined> {
     const names = findBinds(sql);
     if (names.length === 0 || !settings.promptForBinds) {
@@ -199,7 +248,7 @@ export class QueryService implements vscode.Disposable {
     this.emitter.fire(any);
   }
 
-  private async executeOne(conn: Connection, original: string, tag?: string, keepOthers = false): Promise<RunRecord | undefined> {
+  private async executeOne(conn: Connection, original: string, tag?: string, keepOthers = false, preBound?: string): Promise<RunRecord | undefined> {
     let effective: string;
     try {
       effective = prepareStatement(original).sql;
@@ -211,7 +260,7 @@ export class QueryService implements vscode.Disposable {
     }
     let withBinds: string | undefined;
     try {
-      withBinds = await this.askBinds(effective);
+      withBinds = preBound ?? (await this.askBinds(effective));
     } catch (e) {
       const rec = this.results.beginRun({ title: oneLine(original, 40), sql: original, executedSql: original, connectionId: conn.id, connectionName: conn.name, environment: conn.environment }, keepOthers);
       this.finishWithError(rec, conn, original, e, Date.now());
@@ -221,7 +270,7 @@ export class QueryService implements vscode.Disposable {
       return undefined;
     }
     const rec = this.results.beginRun({
-      title: (tag ? `${tag} ` : '') + oneLine(original, 36),
+      title: (tag ? `[${tag}] ` : '') + oneLine(original, 36),
       sql: original,
       executedSql: withBinds,
       connectionId: conn.id,

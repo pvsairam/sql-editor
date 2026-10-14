@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.0
+- **Dates in the grid** are shown as `MM/DD/YYYY` (time added only when a column has times) instead of BI Publisher's ISO text. Setting `fusionSqlDev.results.dateFormat` (`MM/DD/YYYY`, `DD/MM/YYYY`, `YYYY-MM-DD`, `raw`). Copy uses what you see; filters match both forms; exports keep the ISO value (Excel gets real dates).
+- **Run on multiple connections**: *Fusion SQL: Run Statement on Multiple Connections…* (right-click menu / Command Palette). Pick two or more connections; the bind dialog appears once and each connection gets its own result tab named `[DEV]`, `[QA]`... running concurrently.
+
 ## 2.1.1
 - Bind-variable dialog is now a **centred tab in the editor area** (a webview cannot draw outside its own panel); `P_*_DATE`-style names default to DATE; dates accept `YYYY-MM-DD` or `MM/DD/YYYY`.
 - **New worksheets are blank** and named `Worksheet 1`, `Worksheet 2`, ... (no starter comments).

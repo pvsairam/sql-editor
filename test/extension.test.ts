@@ -387,10 +387,25 @@ test('new worksheet opens a SQL document bound to the active connection', async 
   assert.ok(ctx.workspaceState.get('fusionSqlDev.docConnections')[doc.uri.toString()] === 'c1');
 });
 
+test('run on multiple connections: binds once, one tab per connection, concurrent', async () => {
+  const conns = ctx.globalState.get('fusionSqlDev.connections');
+  await ctx.globalState.update('fusionSqlDev.connections', [...conns, { id: 'c3', name: 'QA', url: mock.url, username: 'jdoe', auth: 'basic', environment: 'TEST', createdAt: 3 }]);
+  await ctx.secrets.store('fusionSqlDev.password.c3', 's3cret');
+  host.activeTextEditor = host.makeEditor('SELECT 1 AS OK FROM DUAL');
+  host.ui.picks = [(items: any[]) => items.filter((i) => i.label === 'DEV' || i.label === 'QA')];
+  posted = [];
+  await run('fusionSqlDev.runOnConnections');
+  await waitFor(() => posted.filter((m) => m.type === 'run-rows').length === 2);
+  const starts = posted.filter((m) => m.type === 'run-start');
+  assert.deepEqual(starts.map((s: any) => s.run.title.split(']')[0]).sort(), ['[DEV', '[QA']);
+  assert.deepEqual(starts[1].drop, [], 'later tabs do not replace the first');
+  assert.deepEqual(new Set(starts.map((s: any) => s.run.connectionName)), new Set(['DEV', 'QA']));
+});
+
 test('connection delete removes secrets; legacy import scrubs passwords', async () => {
   host.ui.buttons = (_m, items) => (items.includes('Delete') ? 'Delete' : undefined);
   await run('fusionSqlDev.deleteConnection', 'c2');
-  assert.equal(ctx.globalState.get('fusionSqlDev.connections').length, 1);
+  assert.equal(ctx.globalState.get('fusionSqlDev.connections').length, 2);
   assert.equal(await ctx.secrets.get('fusionSqlDev.password.c2'), undefined);
   host.ui.buttons = () => undefined;
 });

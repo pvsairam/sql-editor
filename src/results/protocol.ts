@@ -25,6 +25,7 @@ export interface ViewSettings {
   maxCellLength: number;
   /** Rows to fetch per run (the "Rows" box). */
   fetchSize: number;
+  dateFormat: 'MM/DD/YYYY' | 'DD/MM/YYYY' | 'YYYY-MM-DD' | 'raw';
 }
 
 export type BindType = 'VARCHAR2' | 'NUMBER' | 'DATE' | 'TIMESTAMP';

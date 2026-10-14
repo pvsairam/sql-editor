@@ -2,7 +2,7 @@
   "name": "fusion-sql-dev",
   "displayName": "Fusion SQL DEV",
   "description": "Oracle Fusion Cloud SQL worksheet for VS Code: run SQL against your Fusion pod through BI Publisher, with browser-session SSO, a fast result grid, schema browser, history and Copilot help.",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "publisher": "fusion-dev",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -113,6 +113,12 @@
         "title": "Run Script (all statements)",
         "category": "Fusion SQL",
         "icon": "$(run-all)"
+      },
+      {
+        "command": "fusionSqlDev.runOnConnections",
+        "title": "Run Statement on Multiple Connections\u2026",
+        "category": "Fusion SQL",
+        "icon": "$(layers)"
       },
       {
         "command": "fusionSqlDev.cancelQuery",
@@ -326,6 +332,10 @@
           "when": "editorLangId == sql"
         },
         {
+          "command": "fusionSqlDev.runOnConnections",
+          "when": "editorLangId == sql"
+        },
+        {
           "command": "fusionSqlDev.formatSql",
           "when": "editorLangId == sql"
         },
@@ -420,6 +430,11 @@
         },
         {
           "command": "fusionSqlDev.runScript",
+          "when": "editorLangId == sql",
+          "group": "9_fusionsql@2"
+        },
+        {
+          "command": "fusionSqlDev.runOnConnections",
           "when": "editorLangId == sql",
           "group": "9_fusionsql@2"
         },
@@ -725,6 +740,17 @@
           "minimum": 20,
           "maximum": 5000,
           "description": "Maximum number of queries kept in History."
+        },
+        "fusionSqlDev.results.dateFormat": {
+          "type": "string",
+          "enum": [
+            "MM/DD/YYYY",
+            "DD/MM/YYYY",
+            "YYYY-MM-DD",
+            "raw"
+          ],
+          "default": "MM/DD/YYYY",
+          "markdownDescription": "How date columns are **displayed and copied** from the grid (time is added when any value has one). Exports (Excel real dates, CSV, JSON) always keep the ISO value. `raw` shows BI Publisher's original text."
         },
         "fusionSqlDev.results.maxCellLength": {
           "type": "integer",

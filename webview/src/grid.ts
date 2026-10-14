@@ -37,10 +37,15 @@ interface Col {
   name: string;
   width: number;
   numeric: boolean;
+  /** every non-empty value is an ISO date/time (BI Publisher's CSV format) */
+  date: boolean;
+  /** some value has a non-midnight time part */
+  time: boolean;
   sort?: 'asc' | 'desc';
   filter: string;
 }
 
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/;
 const ROW_H = 26;
 const HEAD_H = 30;
 const FILTER_H = 28;
@@ -66,6 +71,7 @@ export class Grid {
   private showFilters = false;
   private wrap = false;
   private maxCell = 5000;
+  private dateFormat: 'MM/DD/YYYY' | 'DD/MM/YYYY' | 'YYYY-MM-DD' | 'raw' = 'MM/DD/YYYY';
   private ranges: Range[] = [];
   private anchor: { r: number; c: number } | undefined;
   private focus: { r: number; c: number } | undefined;
@@ -135,7 +141,10 @@ export class Grid {
 
   // ------------------------------------------------------------------------------- data
 
-  setOptions(o: { wrap?: boolean; maxCell?: number }): void {
+  setOptions(o: { wrap?: boolean; maxCell?: number; dateFormat?: 'MM/DD/YYYY' | 'DD/MM/YYYY' | 'YYYY-MM-DD' | 'raw' }): void {
+    if (o.dateFormat !== undefined) {
+      this.dateFormat = o.dateFormat;
+    }
     if (o.wrap !== undefined) {
       this.wrap = o.wrap;
       this.root.classList.toggle('wrap', o.wrap);
@@ -147,13 +156,14 @@ export class Grid {
   }
 
   setData(columns: string[], rows: string[][]): void {
-    this.cols = columns.map((name) => ({ name, width: 120, numeric: true, filter: '' }));
+    this.cols = columns.map((name) => ({ name, width: 120, numeric: true, date: true, time: false, filter: '' }));
     this.rows = rows;
     this.ranges = [];
     this.anchor = this.focus = undefined;
     this.sortOrder = undefined;
     this.nearEndFired = false;
     this.detectNumeric(0);
+    this.detectDates(0);
     this.autosizeAll(200);
     this.rebuildView();
     this.buildHeader();
@@ -168,6 +178,7 @@ export class Grid {
       this.rows.push(r);
     }
     this.detectNumeric(start);
+    this.detectDates(start);
     this.nearEndFired = false;
     this.rebuildView();
     this.buildHeader(); // sort glyphs / numeric alignment may have changed
@@ -185,8 +196,53 @@ export class Grid {
   cell(viewRow: number, col: number): string {
     return this.rows[this.view[viewRow]]?.[col] ?? '';
   }
+  display(viewRow: number, col: number): string {
+    return this.shown(this.cell(viewRow, col), this.cols[col]);
+  }
   isNumericColumn(c: number): boolean {
     return this.cols[c]?.numeric ?? false;
+  }
+
+  private detectDates(from: number): void {
+    for (let c = 0; c < this.cols.length; c++) {
+      const col = this.cols[c];
+      if (from > 0 && !col.date) {
+        continue;
+      }
+      let seen = from > 0;
+      for (let r = from; r < this.rows.length && col.date; r++) {
+        const v = this.rows[r][c];
+        if (v === '' || v === undefined) {
+          continue;
+        }
+        const m = ISO_DATE.exec(v);
+        if (!m) {
+          col.date = false;
+          break;
+        }
+        seen = true;
+        if (m[4] && (m[4] !== '00' || m[5] !== '00' || m[6] !== '00')) {
+          col.time = true;
+        }
+      }
+      if (!seen) {
+        col.date = false;
+      }
+    }
+  }
+
+  /** Text shown in a cell (dates formatted per setting); copy and filters use it too. */
+  private shown(v: string, col: Col): string {
+    if (!col.date || v === '' || this.dateFormat === 'raw') {
+      return v;
+    }
+    const m = ISO_DATE.exec(v);
+    if (!m) {
+      return v;
+    }
+    const [, y, mo, d, hh, mi, ss] = m;
+    const date = this.dateFormat === 'YYYY-MM-DD' ? `${y}-${mo}-${d}` : this.dateFormat === 'DD/MM/YYYY' ? `${d}/${mo}/${y}` : `${mo}/${d}/${y}`;
+    return col.time && hh ? `${date} ${hh}:${mi}:${ss}` : date;
   }
 
   private detectNumeric(from: number): void {
@@ -301,7 +357,7 @@ export class Grid {
       if (ok && q) {
         ok = false;
         for (let c = 0; c < row.length; c++) {
-          if (row[c].toLowerCase().includes(q)) {
+          if (row[c].toLowerCase().includes(q) || (this.cols[c].date && this.shown(row[c], this.cols[c]).toLowerCase().includes(q))) {
             ok = true;
             break;
           }
@@ -355,7 +411,7 @@ export class Grid {
     let w = this.measure(c.name, true) + 44;
     const n = Math.min(this.rows.length, sample);
     for (let r = 0; r < n; r++) {
-      const v = this.rows[r][col] ?? '';
+      const v = this.shown(this.rows[r][col] ?? '', c);
       if (v.length * 4 > w) {
         w = Math.max(w, this.measure(v.length > 120 ? v.slice(0, 120) : v) + 22);
       }
@@ -520,7 +576,7 @@ export class Grid {
       g.dataset['gutter'] = '1';
       row.append(g);
       for (let c = c1; c <= c2; c++) {
-        const v = src[c] ?? '';
+        const v = this.shown(src[c] ?? '', this.cols[c]);
         const cell = el('div', 'cell' + (this.cols[c].numeric ? ' num' : ''));
         cell.dataset['r'] = String(r);
         cell.dataset['c'] = String(c);
@@ -721,14 +777,14 @@ export class Grid {
     const rs = [...rows].sort((a, b) => a - b);
     const cs = [...cols].sort((a, b) => a - b);
     if (rs.length === 1 && cs.length === 1 && !withHeaders) {
-      return this.cell(rs[0], cs[0]); // single cell: raw value, no quoting
+      return this.shown(this.cell(rs[0], cs[0]), this.cols[cs[0]]); // single cell: value as displayed, no quoting
     }
     const lines: string[] = [];
     if (withHeaders) {
       lines.push(cs.map((c) => this.tsvCell(this.cols[c].name)).join('\t'));
     }
     for (const r of rs) {
-      lines.push(cs.map((c) => (this.isSelected(r, c) ? this.tsvCell(this.cell(r, c)) : '')).join('\t'));
+      lines.push(cs.map((c) => (this.isSelected(r, c) ? this.tsvCell(this.shown(this.cell(r, c), this.cols[c])) : '')).join('\t'));
     }
     return lines.join('\n');
   }

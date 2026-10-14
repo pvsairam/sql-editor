@@ -145,6 +145,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   // ------------------------------------------------------------------------ run commands
   reg('fusionSqlDev.runStatement', (args?: { uri?: vscode.Uri; offset?: number }) => query.runStatement(args));
+  reg('fusionSqlDev.runOnConnections', (args?: { uri?: vscode.Uri; offset?: number }) => query.runOnConnections(args));
   reg('fusionSqlDev.runScript', (args?: { uri?: vscode.Uri }) => query.runScript(args));
   reg('fusionSqlDev.cancelQuery', () => query.cancel());
   reg('fusionSqlDev.runSqlText', (sql: string) => query.runSqlText(sql));
