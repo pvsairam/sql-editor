@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.1
+
+- **Save Helper Files…** now writes `dm.xdmz` and `csv.xdoz` separately (plus the bundle). Upload them in the BI Publisher Catalog as a Data Model and a Report, since the Catalog UI does not import our `.xdrz` bundle as a catalog file.
+
 ## 2.5.0
 - **Helper install: "Security violation" handled.** When BI Publisher accepts the helper's data model but refuses to create the report (a BI authoring role is needed for that, separate from owning My Folders), the message now says exactly that and offers **Save Helper File…**.
 - New command **Save Helper Catalog File… (manual upload)** (right-click a connection): saves `FusionSqlDevHelper.xdrz` to upload yourself via *Catalog → My Folders → Upload*; the extension then finds it at `/~user/FusionSqlDev/v2/csv.xdo`.
