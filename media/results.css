@@ -145,3 +145,27 @@ html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; background: 
 .toast.out { opacity: 0; transform: translateY(6px); }
 @keyframes pop { from { opacity: 0; transform: translateY(6px); } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* rows box, pin, dialog ------------------------------------------------ */
+.rows { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); font-size: 12px; }
+.rows-input { width: 82px; font: inherit; font-size: 12px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--line)); border-radius: 6px; padding: 3px 8px; text-align: right; }
+.rows-input:focus { outline: 1px solid var(--vscode-focusBorder); }
+.tab .pin { opacity: 0; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 4px; }
+.tab:hover .pin, .tab .pin.on { opacity: .75; }
+.tab .pin.on { color: var(--vscode-focusBorder); }
+.tab .pin.on .ico { fill: currentColor; }
+.dialog { width: min(720px, 94vw); max-height: 90vh; display: flex; flex-direction: column; border-radius: 12px; background: var(--vscode-editorWidget-background, var(--vscode-editor-background)); border: 1px solid var(--line); box-shadow: 0 16px 48px rgba(0,0,0,.55); }
+.dialog-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.dialog-title { font-weight: 600; font-size: 14px; }
+.dialog-x { cursor: pointer; opacity: .7; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; }
+.dialog-x:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.2)); }
+.bind-grid { display: grid; grid-template-columns: minmax(120px, 1fr) 2fr 70px 130px; gap: 10px 14px; padding: 16px 18px; align-items: center; overflow: auto; }
+.bind-h { font-weight: 600; font-size: 12px; color: var(--dim); }
+.bind-name { font-family: var(--mono); }
+.bind-value, .bind-type { font: inherit; font-size: 13px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--line)); border-radius: 8px; padding: 6px 10px; width: 100%; }
+.bind-value.disabled { opacity: .5; }
+.bind-value:focus, .bind-type:focus { outline: 1px solid var(--vscode-focusBorder); }
+.bind-cell { display: grid; place-items: center; }
+.bind-cell input { width: 16px; height: 16px; }
+.dialog-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); }
+.dialog-foot .btn { padding: 6px 16px; border-radius: 8px; font-size: 13px; }

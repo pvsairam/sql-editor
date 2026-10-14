@@ -48,6 +48,9 @@ export function registerResultsHandlers(results: ResultsView, query: QueryServic
             await exportFile(t.table, msg.format);
             break;
           }
+          case 'set-fetch-size':
+            query.setRowLimit(msg.value);
+            break;
           case 'fetch-more':
             await query.fetchMore(msg.runId, msg.all);
             break;

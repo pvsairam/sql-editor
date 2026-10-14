@@ -2,7 +2,7 @@
   "name": "fusion-sql-dev",
   "displayName": "Fusion SQL DEV",
   "description": "Oracle Fusion Cloud SQL worksheet for VS Code: run SQL against your Fusion pod through BI Publisher, with SSO, a fast result grid, schema browser, history and Copilot help.",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "publisher": "fusion-dev",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -638,8 +638,20 @@
           "type": "integer",
           "default": 1000,
           "minimum": 50,
+          "maximum": 1000000,
+          "markdownDescription": "Default for the **Rows** box in the results panel: how many rows a run fetches (up to 1,000,000). *Fetch more* loads another batch of this size."
+        },
+        "fusionSqlDev.requestSize": {
+          "type": "integer",
+          "default": 5000,
+          "minimum": 100,
           "maximum": 50000,
-          "markdownDescription": "Rows fetched per request. The first batch is shown immediately; use **Fetch more** in the results panel for the next batch."
+          "description": "Rows requested from BI Publisher per round trip while filling the Rows limit."
+        },
+        "fusionSqlDev.results.reuseTab": {
+          "type": "boolean",
+          "default": true,
+          "description": "A new query replaces the previous result tab. Pin a tab (pin icon) to keep it."
         },
         "fusionSqlDev.maxRows": {
           "type": "integer",

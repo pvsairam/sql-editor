@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'crypto';
-import { RunDTO, RunStatus, ToWebview, ViewSettings, FromWebview } from './protocol';
+import { BindField, RunDTO, RunStatus, ToWebview, ViewSettings, FromWebview } from './protocol';
 import { settings } from '../config';
 
 export interface RunRecord {
@@ -24,6 +24,7 @@ export interface RunRecord {
   controller?: AbortController;
   /** The statement as sent (after bind substitution), used by fetch-more / rerun. */
   executedSql: string;
+  pinned?: boolean;
 }
 
 export interface ResultsHandlers {
@@ -40,6 +41,9 @@ export class ResultsView implements vscode.WebviewViewProvider, vscode.Disposabl
   private readonly runs = new Map<string, RunRecord>();
   private activeRunId?: string;
   private handlers?: ResultsHandlers;
+  private bindWaiters = new Map<string, (v: BindField[] | undefined) => void>();
+  /** Row limit chosen in the Rows box (persisted by the caller); falls back to the setting. */
+  rowLimitOverride?: number;
   private readonly disposables: vscode.Disposable[] = [];
 
   constructor(private readonly ctx: vscode.ExtensionContext) {
@@ -57,7 +61,25 @@ export class ResultsView implements vscode.WebviewViewProvider, vscode.Disposabl
   }
 
   private viewSettings(): ViewSettings {
-    return { wrapText: settings.wrapText, maxCellLength: settings.maxCellLength, fetchSize: settings.fetchSize };
+    return { wrapText: settings.wrapText, maxCellLength: settings.maxCellLength, fetchSize: this.rowLimit };
+  }
+
+  get rowLimit(): number {
+    return this.rowLimitOverride ?? settings.fetchSize;
+  }
+
+  setRowLimit(n: number): void {
+    this.rowLimitOverride = n;
+    this.post({ type: 'settings', settings: this.viewSettings() });
+  }
+
+  /** Show the bind-variable dialog inside the results panel. Resolves undefined when cancelled. */
+  async promptBinds(binds: BindField[]): Promise<BindField[] | undefined> {
+    const promptId = `b${Date.now().toString(36)}`;
+    const answer = new Promise<BindField[] | undefined>((resolve) => this.bindWaiters.set(promptId, resolve));
+    this.post({ type: 'bind-prompt', promptId, binds });
+    await this.reveal(false);
+    return answer;
   }
 
   get(runId: string): RunRecord | undefined {
@@ -80,10 +102,23 @@ export class ResultsView implements vscode.WebviewViewProvider, vscode.Disposabl
       if (m.type === 'ready') {
         this.ready = true;
         // `init` carries the complete current state, so queued run messages would only duplicate it; keep toasts.
-        const toasts = this.pending.splice(0).filter((p) => p.type === 'toast');
+        const toasts = this.pending.splice(0).filter((p) => p.type === 'toast' || p.type === 'bind-prompt');
         this.post({ type: 'init', runs: this.all().map((r) => this.dto(r)), activeRunId: this.activeRunId, settings: this.viewSettings() }, true);
         for (const p of toasts) {
           void this.view?.webview.postMessage(p);
+        }
+        return;
+      }
+      if (m.type === 'bind-submit' || m.type === 'bind-cancel') {
+        const w = this.bindWaiters.get(m.promptId);
+        this.bindWaiters.delete(m.promptId);
+        w?.(m.type === 'bind-submit' ? m.values : undefined);
+        return;
+      }
+      if (m.type === 'pin') {
+        const r = this.runs.get(m.runId);
+        if (r) {
+          r.pinned = m.pinned;
         }
         return;
       }
@@ -92,6 +127,10 @@ export class ResultsView implements vscode.WebviewViewProvider, vscode.Disposabl
     view.onDidDispose(() => {
       this.view = undefined;
       this.ready = false;
+      for (const [, w] of this.bindWaiters) {
+        w(undefined);
+      }
+      this.bindWaiters.clear();
     });
   }
 
@@ -143,11 +182,12 @@ export class ResultsView implements vscode.WebviewViewProvider, vscode.Disposabl
       hasMore: r.hasMore,
       loading: r.loading,
       error: r.error,
-      note: r.note
+      note: r.note,
+      pinned: r.pinned
     };
   }
 
-  beginRun(init: Pick<RunRecord, 'title' | 'sql' | 'executedSql' | 'connectionId' | 'connectionName' | 'environment'>): RunRecord {
+  beginRun(init: Pick<RunRecord, 'title' | 'sql' | 'executedSql' | 'connectionId' | 'connectionName' | 'environment'>, keepOthers = false): RunRecord {
     const rec: RunRecord = {
       ...init,
       id: `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`,
@@ -161,6 +201,16 @@ export class ResultsView implements vscode.WebviewViewProvider, vscode.Disposabl
       offset: 0,
       controller: new AbortController()
     };
+    // Replace the previous (unpinned, finished) results instead of piling up tabs - like SQL Developer.
+    const drop: string[] = [];
+    if (settings.reuseTab && !keepOthers) {
+      for (const r of this.runs.values()) {
+        if (!r.pinned && r.status !== 'running' && !r.loading) {
+          drop.push(r.id);
+        }
+      }
+      drop.forEach((id) => this.runs.delete(id));
+    }
     this.runs.set(rec.id, rec);
     while (this.runs.size > MAX_RUNS) {
       const oldest = [...this.runs.values()].find((r) => r.status !== 'running');
@@ -170,29 +220,32 @@ export class ResultsView implements vscode.WebviewViewProvider, vscode.Disposabl
       this.runs.delete(oldest.id);
     }
     this.activeRunId = rec.id;
-    this.post({ type: 'run-start', run: this.dto(rec) });
+    this.post({ type: 'run-start', run: this.dto(rec), drop });
     return rec;
   }
 
-  setRows(rec: RunRecord, columns: string[], rows: string[][], hasMore: boolean, elapsedMs: number, append: boolean, note?: string): void {
+  setRows(rec: RunRecord, columns: string[], rows: string[][], hasMore: boolean, elapsedMs: number, append: boolean, note?: string, keepLoading = false): void {
     if (append) {
       for (const r of rows) {
         rec.rows.push(r);
       }
     } else {
       rec.columns = columns;
-      rec.rows = rows;
+      rec.rows = rows.slice(); // never alias the array that is posted to the webview
     }
     rec.offset = rec.rows.length;
     rec.hasMore = hasMore;
     rec.elapsedMs = append ? rec.elapsedMs + elapsedMs : elapsedMs;
     rec.status = 'done';
-    rec.loading = false;
+    rec.loading = keepLoading;
     rec.error = undefined;
     if (note !== undefined) {
       rec.note = note;
     }
     this.post({ type: 'run-rows', runId: rec.id, columns, rows, append, hasMore, elapsedMs: rec.elapsedMs, note: rec.note });
+    if (keepLoading) {
+      this.post({ type: 'run-loading', runId: rec.id, loading: true });
+    }
   }
 
   setLoading(rec: RunRecord, loading: boolean): void {

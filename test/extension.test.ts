@@ -230,14 +230,71 @@ test('script run: one result tab per statement, stops on the first error', async
   assert.ok(host.messages.some((m) => /Script stopped at statement 2 of 3/.test(m.text)));
 });
 
-test('bind variables are prompted for and substituted', async () => {
-  host.activeTextEditor = host.makeEditor('SELECT * FROM DEMO_T WHERE id = :emp_id');
-  host.ui.inputs = ['42'];
+test('bind variables: a real dialog in the results panel (named and :1 style), typed values, cancel', async () => {
+  host.activeTextEditor = host.makeEditor('SELECT * FROM DEMO_T WHERE id = :emp_id OR id = :1');
+  posted = [];
+  const done = run('fusionSqlDev.runStatement');
+  const prompt = await waitFor(() => posted.find((m) => m.type === 'bind-prompt'));
+  assert.deepEqual(prompt.binds.map((b: any) => b.name), ['EMP_ID', '1']);
+  await fromWebview({ type: 'bind-submit', promptId: prompt.promptId, values: [{ name: 'EMP_ID', value: '42', isNull: false, type: 'NUMBER' }, { name: '1', value: '', isNull: true, type: 'VARCHAR2' }] });
+  await done;
+  await waitFor(() => posted.find((m) => m.type === 'run-rows'));
+  assert.equal(posted.find((m) => m.type === 'run-start').run.sql, 'SELECT * FROM DEMO_T WHERE id = :emp_id OR id = :1', 'history keeps the :bind form');
+  // remembered on the next prompt
+  posted = [];
+  const again = run('fusionSqlDev.runStatement');
+  const p2 = await waitFor(() => posted.find((m) => m.type === 'bind-prompt'));
+  assert.equal(p2.binds[0].value, '42');
+  await fromWebview({ type: 'bind-cancel', promptId: p2.promptId });
+  await again;
+  assert.ok(!posted.some((m) => m.type === 'run-start'), 'cancelling the dialog runs nothing');
+  // invalid number is reported in the results, not thrown
+  posted = [];
+  const bad = run('fusionSqlDev.runStatement');
+  const p3 = await waitFor(() => posted.find((m) => m.type === 'bind-prompt'));
+  await fromWebview({ type: 'bind-submit', promptId: p3.promptId, values: [{ name: 'EMP_ID', value: 'abc', isNull: false, type: 'NUMBER' }, { name: '1', value: 'x', isNull: false, type: 'VARCHAR2' }] });
+  await bad;
+  assert.match((await waitFor(() => posted.find((m) => m.type === 'run-error'))).error.message, /not a valid NUMBER/);
+});
+
+test('new query replaces the previous result tab unless it is pinned; script statements keep their tabs', async () => {
+  host.activeTextEditor = host.makeEditor('SELECT 1 AS OK FROM DUAL');
   posted = [];
   await run('fusionSqlDev.runStatement');
+  const first = (await waitFor(() => posted.find((m) => m.type === 'run-start'))).run.runId;
   await waitFor(() => posted.find((m) => m.type === 'run-rows'));
-  assert.equal(host.ui.inputs.length, 0, 'prompt consumed');
-  assert.equal(posted.find((m) => m.type === 'run-start').run.sql, 'SELECT * FROM DEMO_T WHERE id = :emp_id', 'history keeps the :bind form');
+  await fromWebview({ type: 'pin', runId: first, pinned: true });
+  posted = [];
+  await run('fusionSqlDev.runStatement');
+  const second = await waitFor(() => posted.find((m) => m.type === 'run-start'));
+  assert.deepEqual(second.drop, [], 'pinned result is kept');
+  await waitFor(() => posted.find((m) => m.type === 'run-rows'));
+  posted = [];
+  await run('fusionSqlDev.runStatement');
+  const third = await waitFor(() => posted.find((m) => m.type === 'run-start'));
+  assert.deepEqual(third.drop, [second.run.runId], 'unpinned previous result is replaced');
+  host.activeTextEditor = host.makeEditor('SELECT 1 AS OK FROM DUAL;\nSELECT 2 AS OK FROM DUAL;');
+  posted = [];
+  await run('fusionSqlDev.runScript');
+  await waitFor(() => posted.filter((m) => m.type === 'run-start').length === 2);
+  assert.deepEqual(posted.filter((m) => m.type === 'run-start')[1].drop, [], 'second statement of a script keeps the first tab');
+});
+
+test('Rows box: the limit is applied in request-sized chunks and persisted', async () => {
+  host.config['fusionSqlDev.requestSize'] = 100;
+  await fromWebview({ type: 'set-fetch-size', value: 230 });
+  assert.equal(ctx.globalState.get('fusionSqlDev.rowLimit'), 230);
+  assert.ok(posted.some((m) => m.type === 'settings' && m.settings.fetchSize === 230));
+  host.activeTextEditor = host.makeEditor('SELECT * FROM DEMO_T');
+  posted = [];
+  await run('fusionSqlDev.runStatement');
+  await waitFor(() => posted.some((m) => m.type === 'run-rows' && m.append && m.hasMore) && posted.filter((m) => m.type === 'run-rows').reduce((a, m) => a + m.rows.length, 0) >= 230);
+  const rows = posted.filter((m) => m.type === 'run-rows');
+  assert.equal(rows.reduce((a, m) => a + m.rows.length, 0), 230, JSON.stringify(rows.map((m: any) => [m.append, m.rows.length, m.hasMore])));
+  assert.equal(rows[0].append, false);
+  assert.equal(rows[rows.length - 1].hasMore, true, '20 more rows exist (250 total)');
+  await fromWebview({ type: 'set-fetch-size', value: 100 });
+  host.config['fusionSqlDev.requestSize'] = 5000;
 });
 
 test('wrong password: auth error offered with an Edit Connection action (and a single login attempt)', async () => {
@@ -262,7 +319,7 @@ test('history is persisted without secrets, starred entries survive clear', asyn
   assert.ok(h.length >= 4);
   assert.ok(!/s3cret/.test(text), 'no stored secret in history');
   assert.ok(h.some((e: any) => e.status === 'error' && /ORA-00942/.test(e.error)));
-  assert.ok(h.some((e: any) => e.status === 'success' && e.rowCount === 100), JSON.stringify(h.map((e: any) => [e.status, e.rowCount, e.sql.slice(0, 20)])));
+  assert.ok(h.some((e: any) => e.status === 'success' && e.rowCount >= 100), JSON.stringify(h.map((e: any) => [e.status, e.rowCount, e.sql.slice(0, 20)])));
 });
 
 test('completion: Fusion tables after FROM, aliases and columns after "alias."', async () => {

@@ -1,5 +1,5 @@
 import { Grid, SelectionInfo } from './grid.js';
-import { CopyFormat, FromWebview, RunDTO, ToWebview, ViewSettings } from './protocol.js';
+import { BindField, BindType, CopyFormat, FromWebview, RunDTO, ToWebview, ViewSettings } from './protocol.js';
 import { el, fmtMs, fmtNum, prettyValue } from './util.js';
 
 interface VsCodeApi {
@@ -32,7 +32,8 @@ const ICONS: Record<string, string> = {
   stop: '<path d="M7 7h10v10H7z"/>',
   chevron: '<path d="M6 9l6 6 6-6"/>',
   warn: '<path d="M12 4l9 16H3zM12 10v4m0 3v.01"/>',
-  check: '<path d="M5 12l5 5 9-10"/>'
+  check: '<path d="M5 12l5 5 9-10"/>',
+  pin: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"/>'
 };
 function icon(name: string): SVGSVGElement {
   const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -80,7 +81,15 @@ function toast(text: string, level: 'info' | 'error' = 'info'): void {
   window.setTimeout(() => t.remove(), level === 'error' ? 5400 : 2200);
 }
 
+let openPrompt: string | undefined;
+
 function closeMenus(): void {
+  if (openPrompt) {
+    // dismissing the bind dialog any other way (backdrop click, panel blur) counts as Cancel so the host never waits forever
+    const id = openPrompt;
+    openPrompt = undefined;
+    send({ type: 'bind-cancel', promptId: id });
+  }
   overlay.textContent = '';
   overlay.classList.remove('open', 'modal');
 }
@@ -128,7 +137,7 @@ overlay.addEventListener('mousedown', (e) => {
 window.addEventListener(
   'keydown',
   (e) => {
-    if (e.key === 'Escape' && overlay.classList.contains('open')) {
+    if (e.key === 'Escape' && overlay.classList.contains('open') && !overlay.querySelector('.dialog')) {
       // capture phase: the grid stops propagation of keys it handles
       e.preventDefault();
       e.stopPropagation();
@@ -149,7 +158,7 @@ window.addEventListener('keydown', (e) => {
   }
 });
 window.addEventListener('blur', () => {
-  if (!overlay.classList.contains('modal')) {
+  if (!overlay.classList.contains('modal') && !openPrompt) {
     closeMenus();
   }
 });
@@ -177,6 +186,16 @@ function renderTabs(): void {
     t.title = `${d.sql}\n\n${d.connectionName}`;
     const dot = el('span', `dot ${d.loading ? 'running' : d.status}`);
     t.append(dot, el('span', 'ttl', d.title || 'query'));
+    const pin = el('span', 'pin' + (d.pinned ? ' on' : ''));
+    pin.append(icon('pin'));
+    pin.title = d.pinned ? 'Unpin (this result is kept)' : 'Pin: keep this result when you run another query';
+    pin.addEventListener('click', (e) => {
+      e.stopPropagation();
+      d.pinned = !d.pinned;
+      send({ type: 'pin', runId: d.runId, pinned: !!d.pinned });
+      renderTabs();
+    });
+    t.append(pin);
     const x = el('span', 'x');
     x.append(icon('close'));
     x.title = 'Close';
@@ -326,10 +345,50 @@ function updateInfo(rv: RunView): void {
   }
 }
 
+function rowsBox(): HTMLElement {
+  const wrapEl = el('label', 'rows');
+  wrapEl.title = 'Rows to fetch per run (1 - 1,000,000). Press Enter. "Fetch more" loads another batch of this size.';
+  wrapEl.append(el('span', undefined, 'Rows'));
+  const inp = el('input', 'rows-input');
+  inp.setAttribute('list', 'row-presets');
+  inp.value = String(settings.fetchSize);
+  const list = el('datalist');
+  list.id = 'row-presets';
+  for (const n of [100, 500, 1000, 5000, 10000, 50000, 100000, 1000000]) {
+    const o = el('option');
+    o.value = String(n);
+    list.append(o);
+  }
+  const commit = () => {
+    const n = Math.floor(Number(inp.value.replace(/[, _]/g, '')));
+    if (Number.isFinite(n) && n >= 1) {
+      const v = Math.min(1_000_000, n);
+      inp.value = String(v);
+      if (v !== settings.fetchSize) {
+        settings = { ...settings, fetchSize: v };
+        send({ type: 'set-fetch-size', value: v });
+      }
+    } else {
+      inp.value = String(settings.fetchSize);
+    }
+  };
+  inp.addEventListener('change', commit);
+  inp.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      commit();
+      inp.blur();
+    }
+  });
+  wrapEl.append(inp, list);
+  return wrapEl;
+}
+
 function renderToolbar(): void {
   toolbarEl.textContent = '';
   const rv = active();
   if (!rv) {
+    toolbarEl.append(el('div', 'tb-left'), (() => { const r = el('div', 'tb-right'); r.append(rowsBox()); return r; })());
     return;
   }
   const d = rv.dto;
@@ -350,6 +409,7 @@ function renderToolbar(): void {
     }
   }
 
+  right.append(rowsBox());
   if (d.columns.length) {
     const q = el('input', 'quick');
     q.placeholder = 'Filter rows…  (Ctrl+F)';
@@ -700,6 +760,14 @@ window.addEventListener('message', (ev: MessageEvent<ToWebview>) => {
     }
     case 'run-start': {
       quickText = '';
+      for (const id of m.drop ?? []) {
+        const old = runs.get(id);
+        if (old) {
+          old.grid?.destroy();
+          old.pane.remove();
+          runs.delete(id);
+        }
+      }
       const rv = ensureRun(m.run);
       paintPane(rv);
       activeId = m.run.runId;
@@ -771,6 +839,9 @@ window.addEventListener('message', (ev: MessageEvent<ToWebview>) => {
     case 'toast':
       toast(m.text, m.level);
       break;
+    case 'bind-prompt':
+      showBindDialog(m.promptId, m.binds);
+      break;
     case 'focus-run':
       if (runs.has(m.runId)) {
         activate(m.runId);
@@ -781,3 +852,80 @@ window.addEventListener('message', (ev: MessageEvent<ToWebview>) => {
 
 refresh();
 send({ type: 'ready' });
+
+
+// ------------------------------------------------------------------------ bind dialog
+
+function showBindDialog(promptId: string, binds: BindField[]): void {
+  closeMenus();
+  openPrompt = promptId;
+  overlay.classList.add('open', 'modal');
+  const card = el('div', 'dialog');
+  const head = el('div', 'dialog-head');
+  head.append(el('span', 'dialog-title', 'Bind Variables'));
+  const x = el('span', 'dialog-x');
+  x.append(icon('close'));
+  head.append(x);
+  const grid = el('div', 'bind-grid');
+  for (const h of ['Parameter Name', 'Parameter Value', 'Is Null', 'Data Type']) {
+    grid.append(el('div', 'bind-h', h));
+  }
+  const rows = binds.map((b) => {
+    const name = el('div', 'bind-name', ':' + b.name);
+    const value = el('input', 'bind-value');
+    value.value = b.value;
+    value.placeholder = b.type === 'DATE' || b.type === 'TIMESTAMP' ? 'YYYY-MM-DD or YYYY-MM-DD HH:MI:SS' : '';
+    const nul = el('input', 'bind-null');
+    nul.type = 'checkbox';
+    nul.checked = b.isNull;
+    const type = el('select', 'bind-type');
+    for (const t of ['VARCHAR2', 'NUMBER', 'DATE', 'TIMESTAMP'] as BindType[]) {
+      const o = el('option', undefined, t);
+      o.value = t;
+      type.append(o);
+    }
+    type.value = b.type;
+    const sync = () => {
+      value.disabled = nul.checked;
+      value.classList.toggle('disabled', nul.checked);
+    };
+    nul.addEventListener('change', sync);
+    type.addEventListener('change', () => {
+      value.placeholder = type.value === 'DATE' || type.value === 'TIMESTAMP' ? 'YYYY-MM-DD or YYYY-MM-DD HH:MI:SS' : '';
+    });
+    sync();
+    const nc = el('div', 'bind-cell');
+    nc.append(nul);
+    grid.append(name, value, nc, type);
+    return { b, value, nul, type };
+  });
+  const foot = el('div', 'dialog-foot');
+  const done = (ok: boolean) => {
+    openPrompt = undefined;
+    closeMenus();
+    if (ok) {
+      send({ type: 'bind-submit', promptId, values: rows.map((r) => ({ name: r.b.name, value: r.value.value, isNull: r.nul.checked, type: r.type.value as BindType })) });
+    } else {
+      send({ type: 'bind-cancel', promptId });
+    }
+  };
+  foot.append(
+    button('Cancel', undefined, 'Cancel (Esc)', () => done(false), 'secondary'),
+    button('Clear', undefined, 'Clear all values', () => rows.forEach((r) => { r.value.value = ''; r.nul.checked = false; r.value.disabled = false; }), 'secondary'),
+    button('Execute', undefined, 'Run the query (Enter)', () => done(true))
+  );
+  x.addEventListener('click', () => done(false));
+  card.append(head, grid, foot);
+  card.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      done(true);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      done(false);
+    }
+  });
+  overlay.append(card);
+  rows[0]?.value.focus();
+}

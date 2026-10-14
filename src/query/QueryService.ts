@@ -7,7 +7,8 @@ import { ResultsView, RunRecord } from '../results/ResultsView';
 import { FusionClient } from '../fusion/bip';
 import { FusionError, errorMessage } from '../fusion/errors';
 import { Logger, QueryPage } from '../fusion/types';
-import { applyBinds, findBinds, prepareStatement } from '../sql/prepare';
+import { applyBinds, findBinds, prepareStatement, TypedBind } from '../sql/prepare';
+import { BindField } from '../results/protocol';
 import { oneLine, splitStatements, statementAt } from '../sql/lexer';
 import { settings } from '../config';
 
@@ -22,7 +23,7 @@ export interface RunArgs {
 export class QueryService implements vscode.Disposable {
   private readonly running = new Set<string>();
   private readonly prodConfirmed = new Set<string>();
-  private readonly lastBinds = new Map<string, string>();
+  private readonly lastBinds = new Map<string, BindField>();
   private readonly emitter = new vscode.EventEmitter<boolean>();
   /** fires with `true` while at least one query is in flight */
   readonly onDidChangeRunning = this.emitter.event;
@@ -34,7 +35,18 @@ export class QueryService implements vscode.Disposable {
     private readonly history: HistoryStore,
     private readonly results: ResultsView,
     private readonly log: Logger
-  ) {}
+  ) {
+    const saved = ctx.globalState.get<number>('fusionSqlDev.rowLimit');
+    if (saved) {
+      results.rowLimitOverride = saved;
+    }
+  }
+
+  setRowLimit(n: number): void {
+    const v = Math.max(1, Math.min(1_000_000, Math.floor(n) || 1000));
+    void this.ctx.globalState.update('fusionSqlDev.rowLimit', v);
+    this.results.setRowLimit(v);
+  }
 
   // ----------------------------------------------------------------- connection resolution
 
@@ -146,7 +158,7 @@ export class QueryService implements vscode.Disposable {
       this.prodConfirmed.add(conn.id);
     }
     for (let i = 0; i < statements.length; i++) {
-      const rec = await this.executeOne(conn, statements[i], statements.length > 1 ? `${i + 1}/${statements.length}` : undefined);
+      const rec = await this.executeOne(conn, statements[i], statements.length > 1 ? `${i + 1}/${statements.length}` : undefined, i > 0);
       if (rec?.status === 'error' && statements.length > 1) {
         void vscode.window.showWarningMessage(`Script stopped at statement ${i + 1} of ${statements.length}.`);
         break;
@@ -158,23 +170,19 @@ export class QueryService implements vscode.Disposable {
   }
 
   private async askBinds(sql: string): Promise<string | undefined> {
-    const binds = findBinds(sql);
-    if (binds.length === 0 || !settings.promptForBinds) {
+    const names = findBinds(sql);
+    if (names.length === 0 || !settings.promptForBinds) {
       return sql;
     }
-    const values: Record<string, string> = {};
-    for (const [i, name] of binds.entries()) {
-      const v = await vscode.window.showInputBox({
-        title: `Bind variables (${i + 1}/${binds.length})`,
-        prompt: `Value for :${name.toLowerCase()}  (numbers stay numbers, text is quoted, NULL stays NULL, or type date '2024-01-31')`,
-        value: this.lastBinds.get(name) ?? '',
-        ignoreFocusOut: true
-      });
-      if (v === undefined) {
-        return undefined;
-      }
-      this.lastBinds.set(name, v);
-      values[name] = v;
+    const fields: BindField[] = names.map((name) => this.lastBinds.get(name) ?? { name, value: '', isNull: false, type: 'VARCHAR2' });
+    const answer = await this.results.promptBinds(fields);
+    if (!answer) {
+      return undefined;
+    }
+    const values: Record<string, TypedBind> = {};
+    for (const f of answer) {
+      this.lastBinds.set(f.name, f);
+      values[f.name] = { value: f.value, isNull: f.isNull, type: f.type };
     }
     return applyBinds(sql, values);
   }
@@ -190,17 +198,24 @@ export class QueryService implements vscode.Disposable {
     this.emitter.fire(any);
   }
 
-  private async executeOne(conn: Connection, original: string, tag?: string): Promise<RunRecord | undefined> {
+  private async executeOne(conn: Connection, original: string, tag?: string, keepOthers = false): Promise<RunRecord | undefined> {
     let effective: string;
     try {
       effective = prepareStatement(original).sql;
     } catch (e) {
-      const rec = this.results.beginRun({ title: oneLine(original, 40), sql: original, executedSql: original, connectionId: conn.id, connectionName: conn.name, environment: conn.environment });
+      const rec = this.results.beginRun({ title: oneLine(original, 40), sql: original, executedSql: original, connectionId: conn.id, connectionName: conn.name, environment: conn.environment }, keepOthers);
       await this.results.reveal();
       this.finishWithError(rec, conn, original, e, Date.now());
       return rec;
     }
-    const withBinds = await this.askBinds(effective);
+    let withBinds: string | undefined;
+    try {
+      withBinds = await this.askBinds(effective);
+    } catch (e) {
+      const rec = this.results.beginRun({ title: oneLine(original, 40), sql: original, executedSql: original, connectionId: conn.id, connectionName: conn.name, environment: conn.environment }, keepOthers);
+      this.finishWithError(rec, conn, original, e, Date.now());
+      return rec;
+    }
     if (withBinds === undefined) {
       return undefined;
     }
@@ -211,14 +226,26 @@ export class QueryService implements vscode.Disposable {
       connectionId: conn.id,
       connectionName: conn.name,
       environment: conn.environment
-    });
+    }, keepOthers);
     await this.results.reveal();
     this.setRunning(rec.id, true);
     const started = Date.now();
     try {
       const client = await this.manager.clientFor(conn);
-      const page = await this.runWithRuntime(client, conn, withBinds, 0, settings.fetchSize, rec.controller?.signal);
-      this.results.setRows(rec, page.columns, page.rows, page.hasMore, page.elapsedMs, false, page.unpaged ? 'Paging was not possible for this query (duplicate or unnamed columns) - all rows were returned.' : undefined);
+      const want = this.results.rowLimit;
+      const first = await this.runWithRuntime(client, conn, withBinds, 0, Math.min(want, settings.requestSize), rec.controller?.signal);
+      const more = first.hasMore && first.rows.length < want;
+      this.results.setRows(rec, first.columns, first.rows, first.hasMore, first.elapsedMs, false, first.unpaged ? 'Paging was not possible for this query (duplicate or unnamed columns) - all rows were returned.' : undefined, more);
+      if (more) {
+        try {
+          await this.streamRows(client, rec, want - first.rows.length);
+        } catch (e) {
+          // keep what already arrived; just stop loading
+          this.results.setLoading(rec, false);
+          this.results.toast(e instanceof FusionError && e.kind === 'cancelled' ? 'Cancelled - showing the rows received so far.' : errorMessage(e), e instanceof FusionError && e.kind === 'cancelled' ? 'info' : 'error');
+        }
+      }
+      const page = { rows: rec.rows };
       this.history.add({ sql: original, timestamp: started, durationMs: Date.now() - started, status: 'success', connectionId: conn.id, connectionName: conn.name, rowCount: page.rows.length });
       if (client.reportPath && client.reportPath !== conn.reportPath) {
         void this.store.patch(conn.id, { reportPath: client.reportPath });
@@ -312,6 +339,21 @@ export class QueryService implements vscode.Disposable {
 
   // ----------------------------------------------------------------------- results actions
 
+  /** Append up to `want` more rows to a run, in request-sized chunks, updating the grid as they arrive. */
+  private async streamRows(client: FusionClient, rec: RunRecord, want: number): Promise<void> {
+    let remaining = want;
+    while (remaining > 0 && rec.hasMore) {
+      const take = Math.min(remaining, settings.requestSize);
+      const page = await client.runSql(rec.executedSql, { offset: rec.offset, limit: take, signal: rec.controller?.signal });
+      remaining -= page.rows.length;
+      const keep = page.hasMore && remaining > 0;
+      this.results.setRows(rec, rec.columns.length ? rec.columns : page.columns, page.rows, page.hasMore, page.elapsedMs, true, undefined, keep);
+      if (page.rows.length === 0) {
+        break;
+      }
+    }
+  }
+
   async fetchMore(runId: string, all: boolean): Promise<void> {
     const rec = this.results.get(runId);
     if (!rec || !rec.hasMore || rec.loading) {
@@ -327,24 +369,20 @@ export class QueryService implements vscode.Disposable {
     this.setRunning(rec.id, true);
     try {
       const client = await this.manager.clientFor(conn);
-      for (;;) {
-        const room = settings.maxRows - rec.rows.length;
-        if (room <= 0) {
-          this.results.setRows(rec, rec.columns, [], false, 0, true, `Stopped at ${settings.maxRows.toLocaleString()} rows (setting fusionSqlDev.maxRows).`);
-          break;
-        }
-        const page = await client.runSql(rec.executedSql, { offset: rec.offset, limit: Math.min(settings.fetchSize, room), signal: rec.controller.signal });
-        this.results.setRows(rec, rec.columns.length ? rec.columns : page.columns, page.rows, page.hasMore, page.elapsedMs, true);
-        if (!all || !page.hasMore) {
-          break;
+      const room = Math.max(0, (all ? settings.maxRows : rec.rows.length + this.results.rowLimit) - rec.rows.length);
+      if (room === 0) {
+        this.results.setRows(rec, rec.columns, [], false, 0, true, `Stopped at ${settings.maxRows.toLocaleString()} rows (setting fusionSqlDev.maxRows).`);
+      } else {
+        await this.streamRows(client, rec, all ? room : this.results.rowLimit);
+        if (all && rec.hasMore) {
+          this.results.setRows(rec, rec.columns, [], true, 0, true, `Stopped at ${settings.maxRows.toLocaleString()} rows (setting fusionSqlDev.maxRows).`);
         }
       }
     } catch (e) {
+      this.results.setLoading(rec, false);
       if (e instanceof FusionError && e.kind === 'cancelled') {
-        this.results.setLoading(rec, false);
         this.results.toast('Fetch cancelled.');
       } else {
-        this.results.setLoading(rec, false);
         this.results.toast(errorMessage(e), 'error');
       }
     } finally {

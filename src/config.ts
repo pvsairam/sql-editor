@@ -8,6 +8,12 @@ export const settings = {
   get fetchSize(): number {
     return cfg().get<number>('fetchSize', 1000);
   },
+  get requestSize(): number {
+    return cfg().get<number>('requestSize', 5000);
+  },
+  get reuseTab(): boolean {
+    return cfg().get<boolean>('results.reuseTab', true);
+  },
   get maxRows(): number {
     return cfg().get<number>('maxRows', 100000);
   },

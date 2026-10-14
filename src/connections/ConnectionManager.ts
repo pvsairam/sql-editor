@@ -4,7 +4,7 @@ import { FusionError } from '../fusion/errors';
 import { AuthSession, Logger } from '../fusion/types';
 import { Connection } from '../model';
 import { ConnectionStore } from './ConnectionStore';
-import { OAuthClient, jwtExpiry } from '../auth/oauth';
+import { OAuthClient, TokenStore, jwtExpiry } from '../auth/oauth';
 import { BasicSession, OAuthSession, TokenSession } from '../auth/sessions';
 import { settings } from '../config';
 
@@ -39,41 +39,45 @@ export class ConnectionManager {
     return JSON.stringify([c.url, c.username, c.auth, c.dataSource, c.catalogRoot, c.allowInsecureTls, c.oauth, c.tokenKind, settings.timeoutMs, settings.loopbackPort, settings.redirectHost]);
   }
 
+  /** Build an OAuth client for a (possibly unsaved) connection; the token store is injectable for "Validate". */
+  buildOAuth(c: Connection, clientSecret: string | undefined, tokens: TokenStore): OAuthClient {
+    if (!c.oauth) {
+      throw new FusionError('config', 'This connection is set to Single Sign-On but has no identity-domain settings.', { hint: 'Edit the connection and fill in the Single Sign-On section.' });
+    }
+    return new OAuthClient(
+      {
+        issuer: c.oauth.issuer,
+        clientId: c.oauth.clientId,
+        clientSecret,
+        scope: c.oauth.scope,
+        flow: c.oauth.flow,
+        loopbackPort: settings.loopbackPort,
+        redirectHost: settings.redirectHost,
+        allowInsecureTls: c.allowInsecureTls
+      },
+      tokens,
+      {
+        openBrowser: async (url) => {
+          await vscode.env.openExternal(vscode.Uri.parse(url));
+        },
+        showDeviceCode: (info) => {
+          const target = info.verificationUriComplete ?? info.verificationUri;
+          void vscode.window.showInformationMessage(`Sign in to ${c.name}: enter code ${info.userCode} at ${info.verificationUri}`, 'Copy code & open browser').then(async (pick) => {
+            if (pick) {
+              await vscode.env.clipboard.writeText(info.userCode);
+              await vscode.env.openExternal(vscode.Uri.parse(target));
+            }
+          });
+        }
+      },
+      this.log
+    );
+  }
+
   private async oauthClient(c: Connection): Promise<OAuthClient> {
     let o = this.oauth.get(c.id);
     if (!o) {
-      if (!c.oauth) {
-        throw new FusionError('config', 'This connection is set to Single Sign-On but has no identity-domain settings.', { hint: 'Edit the connection and fill in the OAuth section.' });
-      }
-      const clientSecret = await this.store.getClientSecret(c.id);
-      o = new OAuthClient(
-        {
-          issuer: c.oauth.issuer,
-          clientId: c.oauth.clientId,
-          clientSecret,
-          scope: c.oauth.scope,
-          flow: c.oauth.flow,
-          loopbackPort: settings.loopbackPort,
-          redirectHost: settings.redirectHost,
-          allowInsecureTls: c.allowInsecureTls
-        },
-        this.store.tokenStore(c.id),
-        {
-          openBrowser: async (url) => {
-            await vscode.env.openExternal(vscode.Uri.parse(url));
-          },
-          showDeviceCode: (info) => {
-            const target = info.verificationUriComplete ?? info.verificationUri;
-            void vscode.window.showInformationMessage(`Sign in to ${c.name}: enter code ${info.userCode} at ${info.verificationUri}`, 'Copy code & open browser').then(async (pick) => {
-              if (pick) {
-                await vscode.env.clipboard.writeText(info.userCode);
-                await vscode.env.openExternal(vscode.Uri.parse(target));
-              }
-            });
-          }
-        },
-        this.log
-      );
+      o = this.buildOAuth(c, await this.store.getClientSecret(c.id), this.store.tokenStore(c.id));
       this.oauth.set(c.id, o);
     }
     return o;

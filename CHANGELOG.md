@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.1
+
+Feedback round from the first testers.
+- **One result tab by default**: a new query replaces the previous result (like SQL Developer). Click the pin on a tab to keep it; scripts still get one tab per statement. Setting `fusionSqlDev.results.reuseTab`.
+- **Bind variables dialog**: a proper dialog in the results panel (name, value, *Is Null*, data type VARCHAR2/NUMBER/DATE/TIMESTAMP) instead of search-box prompts; values are remembered. Numeric binds (`:1`) are now detected.
+- **Rows box** in the results toolbar (type or pick 100 ... 1,000,000, press Enter); remembered across sessions. Large limits are fetched in chunks (`fusionSqlDev.requestSize`) and rows appear as they arrive.
+- **Connection form**: a real form (name, environment, Local / SSO / token, URL, user, password, advanced options) with **Validate Setup** replaces the step-by-step prompts. Validating an SSO setup signs in and keeps the tokens when you save.
+
 ## 2.0.0
 
 A ground-up rebuild of 1.0.26. Same extension id, so VS Code upgrades it in place and your connections are

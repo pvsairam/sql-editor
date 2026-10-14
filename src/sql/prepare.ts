@@ -80,11 +80,13 @@ export function wrapForPaging(sql: string, offset: number, limit: number): strin
   return `SELECT * FROM (\n${sql}\n) fusion_sql_page\nOFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`;
 }
 
-/** Find `:name` bind variables outside strings/comments, in order of first appearance. */
+const BIND_RE = () => /(?<![:\w$#]):([A-Za-z0-9_][A-Za-z0-9_$#]*)\b/g;
+
+/** Find `:name` / `:1` bind variables outside strings/comments, in order of first appearance. */
 export function findBinds(sql: string): string[] {
   const masked = maskNonCode(sql);
   const seen: string[] = [];
-  const re = /(?<![:\w$#]):([A-Za-z_][A-Za-z0-9_$#]*)\b/g;
+  const re = BIND_RE();
   let m: RegExpExecArray | null;
   while ((m = re.exec(masked)) !== null) {
     if (!seen.includes(m[1].toUpperCase())) {
@@ -94,10 +96,16 @@ export function findBinds(sql: string): string[] {
   return seen;
 }
 
-/** Substitute bind values as literals. Values are typed: numbers stay bare, NULL stays NULL, others are quoted. */
-export function applyBinds(sql: string, values: Record<string, string>): string {
+export interface TypedBind {
+  value: string;
+  isNull?: boolean;
+  type?: 'VARCHAR2' | 'NUMBER' | 'DATE' | 'TIMESTAMP';
+}
+
+/** Substitute bind values as literals. Plain strings are typed by guessing (see `literal`); TypedBind is exact. */
+export function applyBinds(sql: string, values: Record<string, string | TypedBind>): string {
   const masked = maskNonCode(sql);
-  const re = /(?<![:\w$#]):([A-Za-z_][A-Za-z0-9_$#]*)\b/g;
+  const re = BIND_RE();
   let out = '';
   let last = 0;
   let m: RegExpExecArray | null;
@@ -106,10 +114,40 @@ export function applyBinds(sql: string, values: Record<string, string>): string 
     if (v === undefined) {
       continue;
     }
-    out += sql.slice(last, m.index) + literal(v);
+    out += sql.slice(last, m.index) + (typeof v === 'string' ? literal(v) : typedLiteral(v));
     last = m.index + m[0].length;
   }
   return out + sql.slice(last);
+}
+
+export function typedLiteral(b: TypedBind): string {
+  if (b.isNull) {
+    return 'NULL';
+  }
+  const v = b.value.trim();
+  switch (b.type ?? 'VARCHAR2') {
+    case 'NUMBER':
+      if (!/^-?\d*\.?\d+(?:[eE][+-]?\d+)?$/.test(v)) {
+        throw new FusionError('config', `"${b.value}" is not a valid NUMBER bind value.`);
+      }
+      return v;
+    case 'DATE':
+    case 'TIMESTAMP': {
+      const fn = b.type === 'DATE' ? 'TO_DATE' : 'TO_TIMESTAMP';
+      const iso = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?$/.exec(v);
+      if (iso) {
+        const time = iso[2] ? (iso[2].length === 5 ? iso[2] + ':00' : iso[2]) : '00:00:00';
+        return `${fn}('${iso[1]} ${time}', 'YYYY-MM-DD HH24:MI:SS')`;
+      }
+      const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(v);
+      if (us) {
+        return `${fn}('${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')} 00:00:00', 'YYYY-MM-DD HH24:MI:SS')`;
+      }
+      throw new FusionError('config', `"${b.value}" is not a valid ${b.type} (use YYYY-MM-DD or YYYY-MM-DD HH:MI:SS).`);
+    }
+    default:
+      return `'${b.value.replace(/'/g, "''")}'`;
+  }
 }
 
 export function literal(v: string): string {

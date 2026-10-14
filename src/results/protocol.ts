@@ -17,23 +17,35 @@ export interface RunDTO {
   loading: boolean;
   error?: { message: string; hint?: string; kind: string };
   note?: string;
+  pinned?: boolean;
 }
 
 export interface ViewSettings {
   wrapText: boolean;
   maxCellLength: number;
+  /** Rows to fetch per run (the "Rows" box). */
   fetchSize: number;
+}
+
+export type BindType = 'VARCHAR2' | 'NUMBER' | 'DATE' | 'TIMESTAMP';
+
+export interface BindField {
+  name: string;
+  value: string;
+  isNull: boolean;
+  type: BindType;
 }
 
 export type ToWebview =
   | { type: 'init'; runs: RunDTO[]; activeRunId?: string; settings: ViewSettings }
-  | { type: 'run-start'; run: RunDTO }
+  | { type: 'run-start'; run: RunDTO; drop?: string[] }
   | { type: 'run-rows'; runId: string; columns: string[]; rows: string[][]; append: boolean; hasMore: boolean; elapsedMs: number; note?: string }
   | { type: 'run-loading'; runId: string; loading: boolean }
   | { type: 'run-error'; runId: string; status: RunStatus; error: { message: string; hint?: string; kind: string }; elapsedMs: number }
   | { type: 'settings'; settings: ViewSettings }
   | { type: 'toast'; text: string; level: 'info' | 'error' }
-  | { type: 'focus-run'; runId: string };
+  | { type: 'focus-run'; runId: string }
+  | { type: 'bind-prompt'; promptId: string; binds: BindField[] };
 
 export type CopyFormat = 'tsv' | 'csv' | 'json' | 'markdown' | 'insert' | 'inlist';
 
@@ -47,4 +59,8 @@ export type FromWebview =
   | { type: 'rerun'; runId: string }
   | { type: 'open-sql'; runId: string }
   | { type: 'close-run'; runId: string }
+  | { type: 'pin'; runId: string; pinned: boolean }
+  | { type: 'set-fetch-size'; value: number }
+  | { type: 'bind-submit'; promptId: string; values: BindField[] }
+  | { type: 'bind-cancel'; promptId: string }
   | { type: 'log'; text: string };

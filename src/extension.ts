@@ -3,7 +3,7 @@ import { OutputLogger } from './log';
 import { ConnectionStore } from './connections/ConnectionStore';
 import { ConnectionManager } from './connections/ConnectionManager';
 import { ConnectionItem, ConnectionTree } from './connections/connectionTree';
-import { runConnectionWizard } from './connections/connectionWizard';
+import { openConnectionForm } from './connections/connectionPanel';
 import { HistoryStore } from './history/HistoryStore';
 import { EntryNode, HistoryTree } from './history/historyTree';
 import { SchemaService } from './schema/SchemaService';
@@ -183,52 +183,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   });
 
   // ------------------------------------------------------------------- connection commands
-  reg('fusionSqlDev.addConnection', async () => {
-    const r = await runConnectionWizard();
-    if (!r) {
-      return;
-    }
-    await store.save(r.connection);
-    if (r.password !== undefined) {
-      await store.setPassword(r.connection.id, r.password);
-    }
-    if (r.clientSecret !== undefined) {
-      await store.setClientSecret(r.connection.id, r.clientSecret ?? undefined);
-    }
-    manager.invalidate(r.connection.id);
-    await store.setActive(r.connection.id);
-    const next = await vscode.window.showInformationMessage(`Connection "${r.connection.name}" saved.`, 'Test Connection', r.connection.auth === 'oauth' ? 'Sign In' : 'New Worksheet');
-    if (next === 'Test Connection') {
-      await vscode.commands.executeCommand('fusionSqlDev.testConnection', r.connection.id);
-    } else if (next === 'Sign In') {
-      await vscode.commands.executeCommand('fusionSqlDev.signIn', r.connection.id);
-    } else if (next === 'New Worksheet') {
-      await vscode.commands.executeCommand('fusionSqlDev.newWorksheet');
-    }
-  });
+  reg('fusionSqlDev.addConnection', () => openConnectionForm(ctx, store, manager, log));
 
   reg('fusionSqlDev.editConnection', async (arg?: unknown) => {
     const c = await pickConnection(arg, 'Which connection do you want to edit?');
-    if (!c) {
-      return;
+    if (c) {
+      openConnectionForm(ctx, store, manager, log, c);
     }
-    const r = await runConnectionWizard(c);
-    if (!r) {
-      return;
-    }
-    await store.save(r.connection);
-    if (c.auth !== r.connection.auth || c.oauth?.issuer !== r.connection.oauth?.issuer || c.oauth?.clientId !== r.connection.oauth?.clientId || c.oauth?.scope !== r.connection.oauth?.scope || c.url !== r.connection.url) {
-      await store.tokenStore(c.id).clear(); // tokens issued for other settings would only cause confusing 401s
-    }
-    if (r.password) {
-      await store.setPassword(c.id, r.password);
-    }
-    if (r.clientSecret !== undefined) {
-      await store.setClientSecret(c.id, r.clientSecret ?? undefined);
-    }
-    manager.invalidate(c.id);
-    schema.refresh(c.id);
-    void vscode.window.setStatusBarMessage(`Connection "${r.connection.name}" updated`, 3000);
   });
 
   reg('fusionSqlDev.duplicateConnection', async (arg?: unknown) => {

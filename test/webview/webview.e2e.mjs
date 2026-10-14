@@ -237,6 +237,9 @@ await page.click('button[title^="Record view"]');
 await cell(3, 1).click();
 await cell(8, 2).click({ modifiers: ['Shift'] });
 await page.waitForSelector('.rec-item');
+
+
+
 await page.screenshot({ path: process.env.SHOT2 ?? '/tmp/claude-0/grid2.png' });
 await page.click('button[title^="Record view"]');
 
@@ -292,8 +295,82 @@ await test(`100k rows load in-page (${Math.round(loadMs)} ms), sort and filter s
   assert.ok(Date.now() - f < 2000, `filter took ${Date.now() - f} ms`);
 });
 
+// ---- bind dialog, rows box, pin ----
+await test('bind dialog: modal with name/value/Is Null/type, Enter submits typed values', async () => {
+  await post({ type: 'bind-prompt', promptId: 'b1', binds: [{ name: '1', value: '', isNull: false, type: 'VARCHAR2' }, { name: 'DEPT', value: 'HR', isNull: false, type: 'VARCHAR2' }] });
+  await page.waitForSelector('.dialog .bind-value');
+  assert.match(await page.textContent('.dialog'), /Parameter Name[\s\S]*Parameter Value[\s\S]*Is Null[\s\S]*Data Type/);
+  await page.screenshot({ path: process.env.SHOT3 ?? '/tmp/claude-0/bind.png' });
+  await page.locator('.bind-value').first().fill('100000065388230');
+  await page.locator('.bind-type').first().selectOption('NUMBER');
+  await page.locator('.bind-null').nth(1).check();
+  await page.keyboard.press('Enter');
+  const m = (await sent()).filter((x) => x.type === 'bind-submit').pop();
+  assert.equal(m.promptId, 'b1');
+  assert.deepEqual(m.values, [{ name: '1', value: '100000065388230', isNull: false, type: 'NUMBER' }, { name: 'DEPT', value: 'HR', isNull: true, type: 'VARCHAR2' }]);
+  await page.waitForFunction(() => !document.querySelector('.dialog'));
+});
+await test('bind dialog: Escape cancels', async () => {
+  await post({ type: 'bind-prompt', promptId: 'b2', binds: [{ name: 'X', value: '', isNull: false, type: 'VARCHAR2' }] });
+  await page.waitForSelector('.dialog');
+  await page.keyboard.press('Escape');
+  assert.ok((await sent()).some((x) => x.type === 'bind-cancel' && x.promptId === 'b2'));
+});
+await test('Rows box accepts 1..1,000,000 and tells the host', async () => {
+  const box = page.locator('.rows-input');
+  await box.fill('250000');
+  await box.press('Enter');
+  assert.equal((await sent()).filter((x) => x.type === 'set-fetch-size').pop().value, 250000);
+  await box.fill('99999999');
+  await box.press('Enter');
+  assert.equal((await sent()).filter((x) => x.type === 'set-fetch-size').pop().value, 1000000);
+  await box.fill('abc');
+  await box.press('Enter');
+  assert.equal(await box.inputValue(), '1000000');
+});
+await test('pin icon on a tab notifies the host; run-start can drop replaced tabs', async () => {
+  const before = await page.$$eval('.tab', (t) => t.length);
+  await page.locator('.tab.active .pin').click({ force: true });
+  assert.ok((await sent()).some((x) => x.type === 'pin' && x.pinned === true));
+  await post({ type: 'run-start', run: { runId: 'r9', title: 'new', sql: 'select 1', connectionName: 'DEV', environment: 'DEV', status: 'running', startedAt: Date.now(), elapsedMs: 0, columns: [], rows: [], hasMore: false, loading: true }, drop: ['r1'] });
+  await page.waitForFunction((n) => document.querySelectorAll('.tab').length === n, before);
+  assert.ok(!(await page.$$eval('.tab', (t) => t.map((x) => x.title).join('|'))).includes('select * from demo'));
+});
+
 await page.screenshot({ path: process.env.SHOT ?? '/tmp/claude-0/grid.png' });
 await test('no console or page errors', async () => assert.deepEqual(errors, []));
+
+// ---- connection form ----
+const form = await browser.newPage({ viewport: { width: 900, height: 820 } });
+form.setDefaultTimeout(6000);
+await form.goto(base + 'test/webview/connection.html');
+const fsent = () => form.evaluate(() => window.__sent);
+await form.waitForFunction(() => window.__sent.some((m) => m.type === 'ready'));
+const initForm = { name: '', environment: 'DEV', auth: 'basic', url: '', username: '', password: '', issuer: '', clientId: '', scope: 'urn:opc:resource:consumer::all', flow: 'authorization_code', clientSecret: '', tokenKind: 'bearer', token: '', dataSource: '', catalogRoot: '', allowInsecureTls: false };
+await form.evaluate((f) => window.postMessage({ type: 'init', id: 'c1', editing: false, form: f, hasPassword: false, hasSecret: false, hasToken: false, redirectUrl: 'http://localhost:53682/callback' }, '*'), initForm);
+await test('connection form: fields, auth methods, SSO section, validate + create messages', async () => {
+  await form.waitForSelector('.card');
+  assert.match(await form.textContent('.card'), /Create Connection[\s\S]*Authentication Method[\s\S]*URL[\s\S]*User Name[\s\S]*Password/);
+  const inputs = form.locator('.card input[type=text]');
+  await inputs.nth(0).fill('DEV');
+  await inputs.nth(1).fill('https://abcd.fa.us2.oraclecloud.com');
+  await inputs.nth(2).fill('jdoe');
+  await form.locator('input[type=password]').first().fill('s3cret');
+  await form.getByText('Validate Setup').click();
+  let m = (await fsent()).filter((x) => x.type === 'validate').pop();
+  assert.equal(m.form.url, 'https://abcd.fa.us2.oraclecloud.com');
+  assert.equal(m.form.password, 's3cret');
+  await form.evaluate(() => window.postMessage({ type: 'validation', ok: true, title: 'Connection works', steps: [{ label: 'Server reachable & signed in', ok: true }] }, '*'));
+  await form.waitForSelector('.banner.ok');
+  await form.getByText('SSO (OAuth)').click();
+  await form.waitForSelector('.section');
+  assert.match(await form.textContent('.section'), /Identity domain URL[\s\S]*Client ID[\s\S]*Scope[\s\S]*localhost:53682\/callback/);
+  await form.screenshot({ path: process.env.SHOT4 ?? '/tmp/claude-0/form.png' });
+  await form.locator('button.primary').click();
+  m = (await fsent()).filter((x) => x.type === 'save').pop();
+  assert.equal(m.form.auth, 'oauth');
+  assert.equal(m.form.name, 'DEV');
+});
 
 await browser.close();
 server.close();
