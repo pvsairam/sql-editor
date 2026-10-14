@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.4.0
+- **Dates show the raw database text by default** (`fusionSqlDev.results.dateFormat` = `raw`); `MM/DD/YYYY`, `DD/MM/YYYY` and `YYYY-MM-DD` remain available.
+- **Smarter column auto-fit**: columns are sized from the header and the widest values across up to 1,000 rows (the top 2% outliers are ignored so one long description does not stretch a column), capped at 560 px. Columns re-fit as more rows are fetched, unless you resized that column yourself. New toolbar button *Fit all columns*; double-click a column border to fit one.
+
 ## 2.3.2
 - The connection chip (results toolbar) and the status bar now show the connection of the **SQL file in view** (its own binding), not only the globally active one, so they always match the CodeLens and where the query runs.
 
@@ -11,7 +15,7 @@
 - **Connection switcher in the results toolbar**: a chip with the active connection (colour-coded by environment); click to switch, like SQL Connect's dropdown.
 
 ## 2.2.0
-- **Dates in the grid** are shown as `MM/DD/YYYY` (time added only when a column has times) instead of BI Publisher's ISO text. Setting `fusionSqlDev.results.dateFormat` (`MM/DD/YYYY`, `DD/MM/YYYY`, `YYYY-MM-DD`, `raw`). Copy uses what you see; filters match both forms; exports keep the ISO value (Excel gets real dates).
+- **Dates in the grid** are shown as `raw by default. Setting `fusionSqlDev.results.dateFormat` (`MM/DD/YYYY`, `DD/MM/YYYY`, `YYYY-MM-DD`, `raw`). Copy uses what you see; filters match both forms; exports keep the ISO value (Excel gets real dates).
 - **Run on multiple connections**: *Fusion SQL: Run Statement on Multiple Connections…* (right-click menu / Command Palette). Pick two or more connections; the bind dialog appears once and each connection gets its own result tab named `[DEV]`, `[QA]`... running concurrently.
 
 ## 2.1.1

@@ -345,6 +345,21 @@ await test('single result hides the tab strip; pin button in toolbar notifies ho
 await page.screenshot({ path: process.env.SHOT ?? '/tmp/claude-0/grid.png' });
 await test('no console or page errors', async () => assert.deepEqual(errors, []));
 
+await test('auto-fit: widths follow the data (short ids narrow, long text wider, outliers capped) and re-fit on append', async () => {
+  await post({ type: 'settings', settings: { wrapText: false, maxCellLength: 5000, fetchSize: 1000, dateFormat: 'raw' } });
+  await post({ type: 'run-start', run: { runId: 'rw', title: 'fit', sql: 'select 1', connectionName: 'DEV', environment: 'DEV', status: 'running', startedAt: Date.now(), elapsedMs: 0, columns: [], rows: [], hasMore: false, loading: true }, drop: [] });
+  const data = Array.from({ length: 200 }, (_, i) => [String(i % 10), 'Employee number ' + i, 'x'.repeat(i === 7 ? 3000 : 12), '2026-10-14T03:50:08.000+00:00']);
+  await post({ type: 'run-rows', runId: 'rw', columns: ['ID', 'FULL_NAME', 'NOTE', 'CREATED'], rows: data, append: false, hasMore: true, elapsedMs: 5 });
+  await page.waitForSelector('.pane:not(.hidden) .hcell');
+  const w = () => page.$$eval('.pane:not(.hidden) .hcell', (h) => h.map((x) => Math.round(x.getBoundingClientRect().width)));
+  const a = await w();
+  assert.ok(a[0] < a[1] && a[1] < a[3], `widths ${a}`);
+  assert.ok(a[2] < 200, `outlier must not stretch the column: ${a[2]}`);
+  assert.ok(a[3] > 220, `raw ISO date needs room: ${a[3]}`);
+  await post({ type: 'run-rows', runId: 'rw', columns: [], rows: Array.from({ length: 100 }, (_, i) => ['1', 'A much much longer employee full name than before number ' + i, 'n', '2026-10-14T03:50:08.000+00:00']), append: true, hasMore: false, elapsedMs: 5 });
+  await page.waitForFunction((prev) => document.querySelectorAll('.pane:not(.hidden) .hcell')[1].getBoundingClientRect().width > prev, a[1]);
+});
+
 // ---- bind dialog page ----
 const bd = await browser.newPage({ viewport: { width: 900, height: 620 } });
 bd.setDefaultTimeout(6000);

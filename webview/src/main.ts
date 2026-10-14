@@ -33,6 +33,7 @@ const ICONS: Record<string, string> = {
   chevron: '<path d="M6 9l6 6 6-6"/>',
   warn: '<path d="M12 4l9 16H3zM12 10v4m0 3v.01"/>',
   check: '<path d="M5 12l5 5 9-10"/>',
+  fit: '<path d="M4 12h16M4 12l3-3m-3 3l3 3M20 12l-3-3m3 3l-3 3M4 5v14M20 5v14"/>',
   pin: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"/>'
 };
 function icon(name: string): SVGSVGElement {
@@ -57,7 +58,7 @@ app.append(tabsEl, toolbarEl, contentEl, statusEl, toastEl, overlay);
 
 const runs = new Map<string, RunView>();
 let activeId: string | undefined;
-let settings: ViewSettings = { wrapText: false, maxCellLength: 5000, fetchSize: 1000, dateFormat: 'MM/DD/YYYY' };
+let settings: ViewSettings = { wrapText: false, maxCellLength: 5000, fetchSize: 1000, dateFormat: 'raw' };
 const saved = vscode.getState() ?? {};
 let wrap = saved.wrap ?? false;
 let recordOn = saved.record ?? false;
@@ -451,6 +452,7 @@ function renderToolbar(): void {
     right.append(
       button('Copy', 'copy', 'Copy the selection (Ctrl+C) or choose a format', (e) => copyMenu(rv, e.currentTarget as HTMLElement), 'secondary'),
       button('Export', 'export', 'Export to a file', (e) => exportMenu(rv, e.currentTarget as HTMLElement), 'secondary'),
+      button('', 'fit', 'Fit all columns to their content (double-click a column border to fit one)', () => rv.grid?.fitAll(), 'icon'),
       button('', 'record', 'Record view: all columns of the selected row', () => {
         recordOn = !recordOn;
         persist();

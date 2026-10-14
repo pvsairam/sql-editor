@@ -70,6 +70,7 @@ explanation. Row order is only guaranteed with an `ORDER BY` - add one when you 
 | `fusionSqlDev.runtime.install` | `ask` | `ask` / `auto` / `never` for the helper report |
 | `fusionSqlDev.oauth.loopbackPort` | 53682 | Redirect `http://localhost:<port>/callback` for SSO |
 | `fusionSqlDev.schema.owner` | `FUSION` | Owner shown in Schema view (`%` = all) |
+| `fusionSqlDev.results.dateFormat` | `raw` | `raw` / `MM/DD/YYYY` / `DD/MM/YYYY` / `YYYY-MM-DD` |
 | `fusionSqlDev.format.keywordCase` | `upper` | `upper` / `lower` / `preserve` |
 | `fusionSqlDev.debugLogging` | off | Request metadata (never credentials or data) in the output channel |
 

@@ -12,7 +12,7 @@ export const settings = {
     return cfg().get<number>('requestSize', 5000);
   },
   get dateFormat(): 'MM/DD/YYYY' | 'DD/MM/YYYY' | 'YYYY-MM-DD' | 'raw' {
-    return cfg().get<'MM/DD/YYYY' | 'DD/MM/YYYY' | 'YYYY-MM-DD' | 'raw'>('results.dateFormat', 'MM/DD/YYYY');
+    return cfg().get<'MM/DD/YYYY' | 'DD/MM/YYYY' | 'YYYY-MM-DD' | 'raw'>('results.dateFormat', 'raw');
   },
   get reuseTab(): boolean {
     return cfg().get<boolean>('results.reuseTab', true);

@@ -39,6 +39,8 @@ interface Col {
   numeric: boolean;
   /** every non-empty value is an ISO date/time (BI Publisher's CSV format) */
   date: boolean;
+  /** the user dragged this column's border: never auto-fit it again */
+  userSized?: boolean;
   /** some value has a non-midnight time part */
   time: boolean;
   sort?: 'asc' | 'desc';
@@ -52,7 +54,7 @@ const FILTER_H = 28;
 const GUTTER_W = 52;
 const OVERSCAN = 6;
 const MIN_W = 56;
-const MAX_W = 520;
+const MAX_W = 560;
 
 export class Grid {
   readonly root = el('div', 'grid');
@@ -164,7 +166,7 @@ export class Grid {
     this.nearEndFired = false;
     this.detectNumeric(0);
     this.detectDates(0);
-    this.autosizeAll(200);
+    this.autosizeAll(1000);
     this.rebuildView();
     this.buildHeader();
     this.body.scrollTop = 0;
@@ -179,6 +181,11 @@ export class Grid {
     }
     this.detectNumeric(start);
     this.detectDates(start);
+    this.cols.forEach((c, i) => {
+      if (!c.userSized) {
+        this.autosize(i, 1000);
+      }
+    });
     this.nearEndFired = false;
     this.rebuildView();
     this.buildHeader(); // sort glyphs / numeric alignment may have changed
@@ -406,18 +413,37 @@ export class Grid {
     this.cols.forEach((_c, i) => this.autosize(i, sample));
   }
 
-  autosize(col: number, sample = 2000): void {
+  /**
+   * Fit a column to its content: header + the widest values, ignoring the top 2% outliers so one huge
+   * description does not stretch the column. Long text is capped (MAX_W); use the cell viewer / wrap for the rest.
+   */
+  autosize(col: number, sample = 2000, userAction = false): void {
     const c = this.cols[col];
-    let w = this.measure(c.name, true) + 44;
-    const n = Math.min(this.rows.length, sample);
-    for (let r = 0; r < n; r++) {
-      const v = this.shown(this.rows[r][col] ?? '', c);
-      if (v.length * 4 > w) {
-        w = Math.max(w, this.measure(v.length > 120 ? v.slice(0, 120) : v) + 22);
-      }
+    if (userAction) {
+      c.userSized = false;
     }
-    c.width = Math.round(Math.min(MAX_W, Math.max(MIN_W, w)));
+    const header = this.measure(c.name, true) + 44;
+    const n = Math.min(this.rows.length, sample);
+    const step = this.rows.length > sample ? this.rows.length / sample : 1;
+    const widths: number[] = [];
+    for (let k = 0; k < n; k++) {
+      const v = this.shown(this.rows[Math.floor(k * step)][col] ?? '', c);
+      if (v === '') {
+        continue;
+      }
+      widths.push(this.measure(v.length > 140 ? v.slice(0, 140) : v) + 24);
+    }
+    widths.sort((x, y) => x - y);
+    const body = widths.length === 0 ? 0 : widths.length > 50 ? widths[Math.floor(widths.length * 0.98)] : widths[widths.length - 1];
+    c.width = Math.round(Math.min(MAX_W, Math.max(MIN_W, header, body)));
     this.layoutColumns();
+  }
+
+  /** Re-fit every column (toolbar button). */
+  fitAll(): void {
+    this.cols.forEach((_c, i) => this.autosize(i, 2000, true));
+    this.buildHeader();
+    this.schedule(true);
   }
 
   private layoutColumns(): void {
@@ -462,7 +488,7 @@ export class Grid {
       rz.addEventListener('mousedown', (e) => this.startResize(e, i));
       rz.addEventListener('dblclick', (e) => {
         e.stopPropagation();
-        this.autosize(i);
+        this.autosize(i, 2000, true);
         this.buildHeader();
         this.schedule(true);
       });
@@ -487,6 +513,7 @@ export class Grid {
     e.stopPropagation();
     const startX = e.clientX;
     const startW = this.cols[col].width;
+    this.cols[col].userSized = true;
     const move = (ev: MouseEvent) => {
       this.cols[col].width = Math.max(MIN_W, Math.min(1200, startW + ev.clientX - startX));
       this.layoutColumns();
