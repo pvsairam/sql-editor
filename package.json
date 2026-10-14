@@ -1,0 +1,864 @@
+{
+  "name": "fusion-sql-dev",
+  "displayName": "Fusion SQL DEV",
+  "description": "Oracle Fusion Cloud SQL worksheet for VS Code: run SQL against your Fusion pod through BI Publisher, with SSO, a fast result grid, schema browser, history and Copilot help.",
+  "version": "2.0.0",
+  "publisher": "fusion-dev",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Snippets",
+    "Data Science",
+    "Other"
+  ],
+  "keywords": [
+    "oracle",
+    "fusion",
+    "oracle fusion cloud",
+    "sql",
+    "bi publisher",
+    "bip",
+    "hcm",
+    "erp",
+    "scm",
+    "sql developer"
+  ],
+  "galleryBanner": {
+    "color": "#1b1f27",
+    "theme": "dark"
+  },
+  "extensionKind": [
+    "ui",
+    "workspace"
+  ],
+  "activationEvents": [
+    "onLanguage:sql"
+  ],
+  "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": true
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "fusionSqlDev",
+          "title": "Fusion SQL",
+          "icon": "media/icons/activitybar.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "fusionSqlDevPanel",
+          "title": "Fusion SQL",
+          "icon": "media/icons/activitybar.svg"
+        }
+      ]
+    },
+    "views": {
+      "fusionSqlDev": [
+        {
+          "id": "fusionSqlDev.connections",
+          "name": "Connections",
+          "contextualTitle": "Fusion SQL Connections"
+        },
+        {
+          "id": "fusionSqlDev.schema",
+          "name": "Schema",
+          "contextualTitle": "Fusion SQL Schema",
+          "when": "fusionSqlDev.hasActiveConnection"
+        },
+        {
+          "id": "fusionSqlDev.history",
+          "name": "History",
+          "contextualTitle": "Fusion SQL History"
+        }
+      ],
+      "fusionSqlDevPanel": [
+        {
+          "type": "webview",
+          "id": "fusionSqlDev.results",
+          "name": "Results",
+          "icon": "media/icons/activitybar.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "fusionSqlDev.connections",
+        "contents": "Connect to an Oracle Fusion Cloud pod to run SQL straight from VS Code.\n[$(add) Add Connection](command:fusionSqlDev.addConnection)\n[$(new-file) New SQL Worksheet](command:fusionSqlDev.newWorksheet)\nNeed to sign in with SSO? Choose **Single Sign-On (OAuth)** when adding the connection. [Read the SSO guide](https://github.com/pvsairam/sql-editor/blob/main/docs/SSO.md)."
+      },
+      {
+        "view": "fusionSqlDev.history",
+        "contents": "Queries you run appear here."
+      }
+    ],
+    "commands": [
+      {
+        "command": "fusionSqlDev.runStatement",
+        "title": "Run Statement",
+        "category": "Fusion SQL",
+        "icon": "$(play)"
+      },
+      {
+        "command": "fusionSqlDev.runScript",
+        "title": "Run Script (all statements)",
+        "category": "Fusion SQL",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "fusionSqlDev.cancelQuery",
+        "title": "Cancel Running Query",
+        "category": "Fusion SQL",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "fusionSqlDev.newWorksheet",
+        "title": "New SQL Worksheet",
+        "category": "Fusion SQL",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "fusionSqlDev.formatSql",
+        "title": "Format SQL",
+        "category": "Fusion SQL"
+      },
+      {
+        "command": "fusionSqlDev.switchConnection",
+        "title": "Switch Connection\u2026",
+        "category": "Fusion SQL",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "fusionSqlDev.addConnection",
+        "title": "Add Connection\u2026",
+        "category": "Fusion SQL",
+        "icon": "$(add)"
+      },
+      {
+        "command": "fusionSqlDev.editConnection",
+        "title": "Edit Connection\u2026",
+        "category": "Fusion SQL",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "fusionSqlDev.duplicateConnection",
+        "title": "Duplicate Connection",
+        "category": "Fusion SQL"
+      },
+      {
+        "command": "fusionSqlDev.deleteConnection",
+        "title": "Delete Connection",
+        "category": "Fusion SQL",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "fusionSqlDev.setActiveConnection",
+        "title": "Connect",
+        "category": "Fusion SQL",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "fusionSqlDev.testConnection",
+        "title": "Test Connection",
+        "category": "Fusion SQL",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "fusionSqlDev.signIn",
+        "title": "Sign In (SSO)\u2026",
+        "category": "Fusion SQL",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "fusionSqlDev.signOut",
+        "title": "Sign Out",
+        "category": "Fusion SQL",
+        "icon": "$(sign-out)"
+      },
+      {
+        "command": "fusionSqlDev.setToken",
+        "title": "Set Access Token / Session Cookie\u2026",
+        "category": "Fusion SQL"
+      },
+      {
+        "command": "fusionSqlDev.installRuntime",
+        "title": "Install / Repair Helper Report on Pod",
+        "category": "Fusion SQL",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "fusionSqlDev.importRuntimeFile",
+        "title": "Install Helper From a Catalog File (.xdrz)\u2026",
+        "category": "Fusion SQL"
+      },
+      {
+        "command": "fusionSqlDev.insertSql",
+        "title": "Insert SQL Into Worksheet",
+        "category": "Fusion SQL"
+      },
+      {
+        "command": "fusionSqlDev.runSqlText",
+        "title": "Run SQL Text",
+        "category": "Fusion SQL"
+      },
+      {
+        "command": "fusionSqlDev.refreshConnections",
+        "title": "Refresh",
+        "category": "Fusion SQL",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "fusionSqlDev.refreshSchema",
+        "title": "Refresh Schema",
+        "category": "Fusion SQL",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "fusionSqlDev.searchObjects",
+        "title": "Search Tables & Views\u2026",
+        "category": "Fusion SQL",
+        "icon": "$(search)"
+      },
+      {
+        "command": "fusionSqlDev.clearObjectFilter",
+        "title": "Clear Schema Filter",
+        "category": "Fusion SQL",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "fusionSqlDev.selectFromObject",
+        "title": "Select Top 100 Rows",
+        "category": "Fusion SQL",
+        "icon": "$(table)"
+      },
+      {
+        "command": "fusionSqlDev.insertObjectName",
+        "title": "Insert Name Into Editor",
+        "category": "Fusion SQL"
+      },
+      {
+        "command": "fusionSqlDev.copyObjectName",
+        "title": "Copy Name",
+        "category": "Fusion SQL"
+      },
+      {
+        "command": "fusionSqlDev.openHistoryItem",
+        "title": "Open in Worksheet",
+        "category": "Fusion SQL",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "fusionSqlDev.runHistoryItem",
+        "title": "Run Again",
+        "category": "Fusion SQL",
+        "icon": "$(play)"
+      },
+      {
+        "command": "fusionSqlDev.copyHistoryItem",
+        "title": "Copy SQL",
+        "category": "Fusion SQL",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "fusionSqlDev.starHistoryItem",
+        "title": "Star / Unstar",
+        "category": "Fusion SQL",
+        "icon": "$(star-empty)"
+      },
+      {
+        "command": "fusionSqlDev.deleteHistoryItem",
+        "title": "Remove From History",
+        "category": "Fusion SQL",
+        "icon": "$(close)"
+      },
+      {
+        "command": "fusionSqlDev.searchHistory",
+        "title": "Search History\u2026",
+        "category": "Fusion SQL",
+        "icon": "$(search)"
+      },
+      {
+        "command": "fusionSqlDev.clearHistory",
+        "title": "Clear History",
+        "category": "Fusion SQL",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "fusionSqlDev.showResults",
+        "title": "Show Results Panel",
+        "category": "Fusion SQL",
+        "icon": "$(table)"
+      },
+      {
+        "command": "fusionSqlDev.showLog",
+        "title": "Show Log",
+        "category": "Fusion SQL"
+      },
+      {
+        "command": "fusionSqlDev.openSettings",
+        "title": "Open Settings",
+        "category": "Fusion SQL",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "fusionDevAssistant.start",
+        "title": "Start Workspace",
+        "category": "Fusion SQL"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "fusionSqlDev.runStatement",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "fusionSqlDev.runScript",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "fusionSqlDev.formatSql",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "fusionSqlDev.cancelQuery",
+          "when": "fusionSqlDev.queryRunning"
+        },
+        {
+          "command": "fusionSqlDev.editConnection",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.deleteConnection",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.duplicateConnection",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.setActiveConnection",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.openHistoryItem",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.runHistoryItem",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.copyHistoryItem",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.starHistoryItem",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.deleteHistoryItem",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.selectFromObject",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.insertObjectName",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.copyObjectName",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.insertSql",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.runSqlText",
+          "when": "false"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "fusionSqlDev.runStatement",
+          "when": "editorLangId == sql && !fusionSqlDev.queryRunning",
+          "group": "navigation@1"
+        },
+        {
+          "command": "fusionSqlDev.cancelQuery",
+          "when": "editorLangId == sql && fusionSqlDev.queryRunning",
+          "group": "navigation@1"
+        },
+        {
+          "command": "fusionSqlDev.runScript",
+          "when": "editorLangId == sql",
+          "group": "navigation@2"
+        },
+        {
+          "command": "fusionSqlDev.switchConnection",
+          "when": "editorLangId == sql",
+          "group": "navigation@3"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "fusionSqlDev.runStatement",
+          "when": "editorLangId == sql",
+          "group": "9_fusionsql@1"
+        },
+        {
+          "command": "fusionSqlDev.runScript",
+          "when": "editorLangId == sql",
+          "group": "9_fusionsql@2"
+        },
+        {
+          "command": "fusionSqlDev.formatSql",
+          "when": "editorLangId == sql",
+          "group": "9_fusionsql@3"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "fusionSqlDev.addConnection",
+          "when": "view == fusionSqlDev.connections",
+          "group": "navigation@1"
+        },
+        {
+          "command": "fusionSqlDev.newWorksheet",
+          "when": "view == fusionSqlDev.connections",
+          "group": "navigation@2"
+        },
+        {
+          "command": "fusionSqlDev.refreshConnections",
+          "when": "view == fusionSqlDev.connections",
+          "group": "navigation@3"
+        },
+        {
+          "command": "fusionSqlDev.searchObjects",
+          "when": "view == fusionSqlDev.schema",
+          "group": "navigation@1"
+        },
+        {
+          "command": "fusionSqlDev.clearObjectFilter",
+          "when": "view == fusionSqlDev.schema",
+          "group": "navigation@2"
+        },
+        {
+          "command": "fusionSqlDev.refreshSchema",
+          "when": "view == fusionSqlDev.schema",
+          "group": "navigation@3"
+        },
+        {
+          "command": "fusionSqlDev.searchHistory",
+          "when": "view == fusionSqlDev.history",
+          "group": "navigation@1"
+        },
+        {
+          "command": "fusionSqlDev.clearHistory",
+          "when": "view == fusionSqlDev.history",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "fusionSqlDev.setActiveConnection",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection/",
+          "group": "inline@1"
+        },
+        {
+          "command": "fusionSqlDev.testConnection",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection/",
+          "group": "inline@2"
+        },
+        {
+          "command": "fusionSqlDev.editConnection",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection/",
+          "group": "inline@3"
+        },
+        {
+          "command": "fusionSqlDev.setActiveConnection",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection/",
+          "group": "1_connect@1"
+        },
+        {
+          "command": "fusionSqlDev.testConnection",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection/",
+          "group": "1_connect@2"
+        },
+        {
+          "command": "fusionSqlDev.signIn",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection.*oauth/",
+          "group": "1_connect@3"
+        },
+        {
+          "command": "fusionSqlDev.signOut",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection.*oauth/",
+          "group": "1_connect@4"
+        },
+        {
+          "command": "fusionSqlDev.setToken",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection.*token/",
+          "group": "1_connect@5"
+        },
+        {
+          "command": "fusionSqlDev.installRuntime",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection/",
+          "group": "2_runtime@1"
+        },
+        {
+          "command": "fusionSqlDev.importRuntimeFile",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection/",
+          "group": "2_runtime@2"
+        },
+        {
+          "command": "fusionSqlDev.editConnection",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection/",
+          "group": "3_edit@1"
+        },
+        {
+          "command": "fusionSqlDev.duplicateConnection",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection/",
+          "group": "3_edit@2"
+        },
+        {
+          "command": "fusionSqlDev.deleteConnection",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection/",
+          "group": "3_edit@3"
+        },
+        {
+          "command": "fusionSqlDev.selectFromObject",
+          "when": "view == fusionSqlDev.schema && viewItem == dbObject",
+          "group": "inline@1"
+        },
+        {
+          "command": "fusionSqlDev.selectFromObject",
+          "when": "view == fusionSqlDev.schema && viewItem == dbObject",
+          "group": "1_query@1"
+        },
+        {
+          "command": "fusionSqlDev.insertObjectName",
+          "when": "view == fusionSqlDev.schema && viewItem =~ /^db(Object|Column)/",
+          "group": "1_query@2"
+        },
+        {
+          "command": "fusionSqlDev.copyObjectName",
+          "when": "view == fusionSqlDev.schema && viewItem =~ /^db(Object|Column)/",
+          "group": "1_query@3"
+        },
+        {
+          "command": "fusionSqlDev.runHistoryItem",
+          "when": "view == fusionSqlDev.history && viewItem =~ /^history/",
+          "group": "inline@1"
+        },
+        {
+          "command": "fusionSqlDev.starHistoryItem",
+          "when": "view == fusionSqlDev.history && viewItem =~ /^history/",
+          "group": "inline@2"
+        },
+        {
+          "command": "fusionSqlDev.deleteHistoryItem",
+          "when": "view == fusionSqlDev.history && viewItem =~ /^history/",
+          "group": "inline@3"
+        },
+        {
+          "command": "fusionSqlDev.openHistoryItem",
+          "when": "view == fusionSqlDev.history && viewItem =~ /^history/",
+          "group": "1_use@1"
+        },
+        {
+          "command": "fusionSqlDev.runHistoryItem",
+          "when": "view == fusionSqlDev.history && viewItem =~ /^history/",
+          "group": "1_use@2"
+        },
+        {
+          "command": "fusionSqlDev.copyHistoryItem",
+          "when": "view == fusionSqlDev.history && viewItem =~ /^history/",
+          "group": "1_use@3"
+        },
+        {
+          "command": "fusionSqlDev.starHistoryItem",
+          "when": "view == fusionSqlDev.history && viewItem =~ /^history/",
+          "group": "2_manage@1"
+        },
+        {
+          "command": "fusionSqlDev.deleteHistoryItem",
+          "when": "view == fusionSqlDev.history && viewItem =~ /^history/",
+          "group": "2_manage@2"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "fusionSqlDev.runStatement",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && editorLangId == sql && !suggestWidgetVisible"
+      },
+      {
+        "command": "fusionSqlDev.runScript",
+        "key": "f5",
+        "mac": "f5",
+        "when": "editorTextFocus && editorLangId == sql && !inDebugMode"
+      },
+      {
+        "command": "fusionSqlDev.runScript",
+        "key": "ctrl+shift+enter",
+        "mac": "cmd+shift+enter",
+        "when": "editorTextFocus && editorLangId == sql"
+      },
+      {
+        "command": "fusionSqlDev.cancelQuery",
+        "key": "ctrl+shift+c",
+        "mac": "cmd+shift+c",
+        "when": "editorTextFocus && editorLangId == sql && fusionSqlDev.queryRunning"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "sql",
+        "path": "./media/snippets/sql.json"
+      }
+    ],
+    "configuration": {
+      "title": "Fusion SQL DEV",
+      "properties": {
+        "fusionSqlDev.fetchSize": {
+          "type": "integer",
+          "default": 1000,
+          "minimum": 50,
+          "maximum": 50000,
+          "markdownDescription": "Rows fetched per request. The first batch is shown immediately; use **Fetch more** in the results panel for the next batch."
+        },
+        "fusionSqlDev.maxRows": {
+          "type": "integer",
+          "default": 100000,
+          "minimum": 1000,
+          "maximum": 1000000,
+          "markdownDescription": "Upper bound on rows held in memory for one result (applies to *Fetch all*)."
+        },
+        "fusionSqlDev.queryTimeoutSeconds": {
+          "type": "integer",
+          "default": 300,
+          "minimum": 10,
+          "maximum": 3600,
+          "description": "How long to wait for BI Publisher to answer one request."
+        },
+        "fusionSqlDev.codeLens.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Run | Run Script actions above SQL statements."
+        },
+        "fusionSqlDev.blankLineEndsStatement": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Treat a blank line as the end of a statement (in addition to `;` and a lone `/`)."
+        },
+        "fusionSqlDev.promptForBinds": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Ask for values of `:bind` variables before running (they are substituted as literals; BI Publisher cannot bind them)."
+        },
+        "fusionSqlDev.runtime.install": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "auto",
+            "never"
+          ],
+          "default": "ask",
+          "markdownDescription": "What to do when the helper BI Publisher report is missing on the pod. `ask` prompts once per connection, `auto` installs silently into your personal catalog folder, `never` only uses what is already deployed."
+        },
+        "fusionSqlDev.format.keywordCase": {
+          "type": "string",
+          "enum": [
+            "upper",
+            "lower",
+            "preserve"
+          ],
+          "default": "upper",
+          "description": "Keyword casing applied by Format SQL."
+        },
+        "fusionSqlDev.format.indent": {
+          "type": "integer",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Indent width used by Format SQL."
+        },
+        "fusionSqlDev.completion.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Offer Fusion table, column and keyword completion in SQL files."
+        },
+        "fusionSqlDev.schema.owner": {
+          "type": "string",
+          "default": "FUSION",
+          "markdownDescription": "Schema owner whose tables and views appear in the Schema view and completion. Use `%` for every visible owner."
+        },
+        "fusionSqlDev.history.maxEntries": {
+          "type": "integer",
+          "default": 500,
+          "minimum": 20,
+          "maximum": 5000,
+          "description": "Maximum number of queries kept in History."
+        },
+        "fusionSqlDev.results.maxCellLength": {
+          "type": "integer",
+          "default": 5000,
+          "minimum": 100,
+          "maximum": 100000,
+          "description": "Cells longer than this are truncated in the grid (copy and export always use the full value)."
+        },
+        "fusionSqlDev.results.wrapText": {
+          "type": "boolean",
+          "default": false,
+          "description": "Wrap long cell values instead of truncating them with an ellipsis."
+        },
+        "fusionSqlDev.export.csvDelimiter": {
+          "type": "string",
+          "default": ",",
+          "enum": [
+            ",",
+            ";",
+            "\t",
+            "|"
+          ],
+          "description": "Delimiter used by CSV export."
+        },
+        "fusionSqlDev.oauth.loopbackPort": {
+          "type": "integer",
+          "default": 53682,
+          "minimum": 0,
+          "maximum": 65535,
+          "markdownDescription": "Port of the local sign-in redirect `http://<redirectHost>:<port>/callback`. Register exactly this redirect URL in the identity domain application. `0` picks a random free port (only useful if the identity provider allows wildcard ports)."
+        },
+        "fusionSqlDev.oauth.redirectHost": {
+          "type": "string",
+          "default": "localhost",
+          "enum": [
+            "localhost",
+            "127.0.0.1"
+          ],
+          "markdownDescription": "Host name used in the sign-in redirect URL. The listener itself only binds to the loopback interface."
+        },
+        "fusionSqlDev.debugLogging": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Log request/response metadata (never credentials or data) to the **Fusion SQL DEV** output channel."
+        }
+      }
+    },
+    "chatParticipants": [
+      {
+        "id": "fusion-sql-dev.fusion",
+        "name": "fusion",
+        "fullName": "Fusion SQL",
+        "description": "Write, explain, fix and tune Oracle Fusion Cloud SQL",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "write",
+            "description": "Write a Fusion SQL query from a description"
+          },
+          {
+            "name": "explain",
+            "description": "Explain the SQL in the active editor"
+          },
+          {
+            "name": "fix",
+            "description": "Fix the last error or the SQL in the active editor"
+          },
+          {
+            "name": "optimize",
+            "description": "Suggest performance improvements"
+          },
+          {
+            "name": "tables",
+            "description": "Suggest Fusion tables for a business topic"
+          }
+        ]
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "fusionSqlDev.gettingStarted",
+        "title": "Get started with Fusion SQL DEV",
+        "description": "Connect to Oracle Fusion Cloud and run your first query in a minute.",
+        "steps": [
+          {
+            "id": "connect",
+            "title": "Add a connection",
+            "description": "Enter your pod URL and choose how you sign in (password or Single Sign-On).\n[Add Connection](command:fusionSqlDev.addConnection)",
+            "media": {
+              "markdown": "media/walkthrough/connect.md"
+            },
+            "completionEvents": [
+              "onCommand:fusionSqlDev.addConnection"
+            ]
+          },
+          {
+            "id": "helper",
+            "title": "One-time helper report",
+            "description": "A tiny BI Publisher report is installed in your personal folder on first use.",
+            "media": {
+              "markdown": "media/walkthrough/helper.md"
+            }
+          },
+          {
+            "id": "run",
+            "title": "Write and run SQL",
+            "description": "Open a worksheet and press Ctrl+Enter.\n[New SQL Worksheet](command:fusionSqlDev.newWorksheet)",
+            "media": {
+              "markdown": "media/walkthrough/run.md"
+            },
+            "completionEvents": [
+              "onCommand:fusionSqlDev.runStatement"
+            ]
+          },
+          {
+            "id": "results",
+            "title": "Copy, filter and export results",
+            "description": "Select cells, copy in many formats, export to Excel.",
+            "media": {
+              "markdown": "media/walkthrough/results.md"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "test": "node scripts/build.mjs --test",
+    "package": "node scripts/package-vsix.mjs",
+    "vscode:prepublish": "node scripts/build.mjs",
+    "lint": "eslint src webview/src test",
+    "test:webview": "node test/webview/webview.e2e.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "1.95.0",
+    "typescript": "^5.6.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pvsairam/sql-editor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pvsairam/sql-editor/issues"
+  },
+  "homepage": "https://github.com/pvsairam/sql-editor#readme"
+}

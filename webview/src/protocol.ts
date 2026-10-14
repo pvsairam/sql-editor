@@ -1,0 +1,50 @@
+/** Messages exchanged between the extension host and the results webview. Keep in sync with webview/src/protocol.ts. */
+
+export type RunStatus = 'running' | 'done' | 'error' | 'cancelled';
+
+export interface RunDTO {
+  runId: string;
+  title: string;
+  sql: string;
+  connectionName: string;
+  environment: string;
+  status: RunStatus;
+  startedAt: number;
+  elapsedMs: number;
+  columns: string[];
+  rows: string[][];
+  hasMore: boolean;
+  loading: boolean;
+  error?: { message: string; hint?: string; kind: string };
+  note?: string;
+}
+
+export interface ViewSettings {
+  wrapText: boolean;
+  maxCellLength: number;
+  fetchSize: number;
+}
+
+export type ToWebview =
+  | { type: 'init'; runs: RunDTO[]; activeRunId?: string; settings: ViewSettings }
+  | { type: 'run-start'; run: RunDTO }
+  | { type: 'run-rows'; runId: string; columns: string[]; rows: string[][]; append: boolean; hasMore: boolean; elapsedMs: number; note?: string }
+  | { type: 'run-loading'; runId: string; loading: boolean }
+  | { type: 'run-error'; runId: string; status: RunStatus; error: { message: string; hint?: string; kind: string }; elapsedMs: number }
+  | { type: 'settings'; settings: ViewSettings }
+  | { type: 'toast'; text: string; level: 'info' | 'error' }
+  | { type: 'focus-run'; runId: string };
+
+export type CopyFormat = 'tsv' | 'csv' | 'json' | 'markdown' | 'insert' | 'inlist';
+
+export type FromWebview =
+  | { type: 'ready' }
+  | { type: 'copy'; text: string; label: string }
+  | { type: 'copy-as'; runId: string; format: CopyFormat; headers: boolean; rowIdx: number[] | null; colIdx: number[] | null }
+  | { type: 'export'; runId: string; format: 'csv' | 'xlsx' | 'json'; rowIdx: number[] | null; colIdx: number[] | null }
+  | { type: 'fetch-more'; runId: string; all: boolean }
+  | { type: 'cancel'; runId: string }
+  | { type: 'rerun'; runId: string }
+  | { type: 'open-sql'; runId: string }
+  | { type: 'close-run'; runId: string }
+  | { type: 'log'; text: string };

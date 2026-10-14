@@ -1,0 +1,63 @@
+{
+  "Fusion: active employees": {
+    "prefix": "fusion-active-emp",
+    "description": "Active employees with name, assignment and manager-friendly date filters",
+    "body": [
+      "SELECT papf.person_number,",
+      "       ppnf.full_name,",
+      "       paam.assignment_number,",
+      "       paam.assignment_status_type",
+      "FROM   per_all_people_f papf",
+      "       JOIN per_person_names_f ppnf",
+      "         ON ppnf.person_id = papf.person_id",
+      "        AND ppnf.name_type = 'GLOBAL'",
+      "        AND TRUNC(SYSDATE) BETWEEN ppnf.effective_start_date AND ppnf.effective_end_date",
+      "       JOIN per_all_assignments_m paam",
+      "         ON paam.person_id = papf.person_id",
+      "        AND paam.assignment_type = 'E'",
+      "        AND paam.primary_flag = 'Y'",
+      "        AND paam.effective_latest_change = 'Y'",
+      "        AND TRUNC(SYSDATE) BETWEEN paam.effective_start_date AND paam.effective_end_date",
+      "WHERE  TRUNC(SYSDATE) BETWEEN papf.effective_start_date AND papf.effective_end_date",
+      "AND    paam.assignment_status_type = 'ACTIVE'$0"
+    ]
+  },
+  "Fusion: date-effective filter": {
+    "prefix": "fusion-dateeff",
+    "description": "Standard date-effective predicate",
+    "body": "TRUNC(SYSDATE) BETWEEN ${1:alias}.effective_start_date AND ${1:alias}.effective_end_date"
+  },
+  "Fusion: lookup meaning": {
+    "prefix": "fusion-lookup",
+    "description": "Resolve a lookup code to its meaning",
+    "body": [
+      "SELECT flv.lookup_code, flv.meaning, flv.description",
+      "FROM   fnd_lookup_values flv",
+      "WHERE  flv.lookup_type = '${1:LOOKUP_TYPE}'",
+      "AND    flv.language = 'US'",
+      "AND    flv.enabled_flag = 'Y'",
+      "AND    TRUNC(SYSDATE) BETWEEN NVL(flv.start_date_active, TRUNC(SYSDATE)) AND NVL(flv.end_date_active, TRUNC(SYSDATE))$0"
+    ]
+  },
+  "Fusion: table row counts by owner": {
+    "prefix": "fusion-tables",
+    "description": "Find tables by name pattern",
+    "body": [
+      "SELECT owner, table_name",
+      "FROM   all_tables",
+      "WHERE  table_name LIKE '${1:PER_%}'",
+      "ORDER  BY table_name"
+    ]
+  },
+  "Fusion: invoices with supplier": {
+    "prefix": "fusion-ap-invoices",
+    "description": "Payables invoices joined to suppliers",
+    "body": [
+      "SELECT aia.invoice_num, aia.invoice_date, aia.invoice_amount, aia.invoice_currency_code,",
+      "       ps.segment1 AS supplier_number",
+      "FROM   ap_invoices_all aia",
+      "       JOIN poz_suppliers ps ON ps.vendor_id = aia.vendor_id",
+      "WHERE  aia.invoice_date >= ADD_MONTHS(TRUNC(SYSDATE), -${1:3})$0"
+    ]
+  }
+}

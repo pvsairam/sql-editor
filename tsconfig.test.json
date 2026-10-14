@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.offline.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": ".test-out",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "sourceMap": false
+  },
+  "include": ["src", "test", "typings/vscode.d.ts"]
+}
