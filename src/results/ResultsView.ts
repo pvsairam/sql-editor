@@ -43,6 +43,12 @@ export class ResultsView implements vscode.WebviewViewProvider, vscode.Disposabl
   private handlers?: ResultsHandlers;
   /** Row limit chosen in the Rows box (persisted by the caller); falls back to the setting. */
   rowLimitOverride?: number;
+  private connection?: { name: string; environment: string };
+
+  setConnection(c: { name: string; environment: string } | undefined): void {
+    this.connection = c;
+    this.post({ type: 'settings', settings: this.viewSettings() });
+  }
   private readonly disposables: vscode.Disposable[] = [];
 
   constructor(private readonly ctx: vscode.ExtensionContext) {
@@ -60,7 +66,7 @@ export class ResultsView implements vscode.WebviewViewProvider, vscode.Disposabl
   }
 
   private viewSettings(): ViewSettings {
-    return { wrapText: settings.wrapText, maxCellLength: settings.maxCellLength, fetchSize: this.rowLimit, dateFormat: settings.dateFormat };
+    return { wrapText: settings.wrapText, maxCellLength: settings.maxCellLength, fetchSize: this.rowLimit, dateFormat: settings.dateFormat, connection: this.connection };
   }
 
   get rowLimit(): number {

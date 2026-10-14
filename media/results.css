@@ -154,3 +154,8 @@ html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; background: 
 .tab:hover .pin, .tab .pin.on { opacity: .75; }
 .tab .pin.on { color: var(--vscode-focusBorder); }
 .tab .pin.on .ico { fill: currentColor; }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--vscode-foreground); font: inherit; font-size: 12px; cursor: pointer; }
+.chip:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.2)); }
+.envdot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+.envdot.DEV { background: #3fb950; } .envdot.TEST { background: #58a6ff; } .envdot.UAT { background: #d29922; } .envdot.PROD { background: #f85149; } .envdot.OTHER { background: #a371f7; }

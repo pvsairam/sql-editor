@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.0
+- **Table browser**: in the Schema view, right-click a table/view (or use the inline button) → *Open Table*. Four result tabs open: **Columns** (type, nullability, primary key, column comments), **Constraints**, **Indexes** and **Data** (all rows via the Rows limit).
+- **Connection switcher in the results toolbar**: a chip with the active connection (colour-coded by environment); click to switch, like SQL Connect's dropdown.
+
 ## 2.2.0
 - **Dates in the grid** are shown as `MM/DD/YYYY` (time added only when a column has times) instead of BI Publisher's ISO text. Setting `fusionSqlDev.results.dateFormat` (`MM/DD/YYYY`, `DD/MM/YYYY`, `YYYY-MM-DD`, `raw`). Copy uses what you see; filters match both forms; exports keep the ISO value (Excel gets real dates).
 - **Run on multiple connections**: *Fusion SQL: Run Statement on Multiple Connections…* (right-click menu / Command Palette). Pick two or more connections; the bind dialog appears once and each connection gets its own result tab named `[DEV]`, `[QA]`... running concurrently.

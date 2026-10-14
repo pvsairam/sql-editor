@@ -48,6 +48,9 @@ export function registerResultsHandlers(results: ResultsView, query: QueryServic
             await exportFile(t.table, msg.format);
             break;
           }
+          case 'switch-connection':
+            await vscode.commands.executeCommand('fusionSqlDev.switchConnection');
+            break;
           case 'set-fetch-size':
             query.setRowLimit(msg.value);
             break;

@@ -310,6 +310,13 @@ await test(`100k rows load in-page (${Math.round(loadMs)} ms), sort and filter s
 });
 
 // ---- bind dialog, rows box, pin ----
+await test('connection chip shows the active connection and asks the host to switch', async () => {
+  await post({ type: 'settings', settings: { wrapText: false, maxCellLength: 5000, fetchSize: 1000, dateFormat: 'MM/DD/YYYY', connection: { name: 'ECGA NEW', environment: 'PROD' } } });
+  await page.waitForSelector('.chip .envdot.PROD');
+  assert.match(await page.textContent('.chip'), /ECGA NEW/);
+  await page.locator('.chip').click();
+  assert.ok((await sent()).some((x) => x.type === 'switch-connection'));
+});
 await test('Rows box accepts 1..1,000,000 and tells the host', async () => {
   const box = page.locator('.rows-input');
   await box.fill('250000');

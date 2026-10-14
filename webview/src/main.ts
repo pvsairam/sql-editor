@@ -339,6 +339,15 @@ function updateInfo(rv: RunView): void {
   }
 }
 
+function connChip(): HTMLElement {
+  const c = settings.connection;
+  const b = el('button', 'chip');
+  b.title = 'Active connection - click to switch';
+  b.append(el('span', `envdot ${c?.environment ?? ''}`), el('span', undefined, c ? c.name : 'Select connection'), icon('chevron'));
+  b.addEventListener('click', () => send({ type: 'switch-connection' }));
+  return b;
+}
+
 function rowsBox(): HTMLElement {
   const wrapEl = el('label', 'rows');
   wrapEl.title = 'Rows to fetch per run (1 - 1,000,000). Press Enter. "Fetch more" loads another batch of this size.';
@@ -382,7 +391,7 @@ function renderToolbar(): void {
   toolbarEl.textContent = '';
   const rv = active();
   if (!rv) {
-    toolbarEl.append(el('div', 'tb-left'), (() => { const r = el('div', 'tb-right'); r.append(rowsBox()); return r; })());
+    toolbarEl.append(el('div', 'tb-left'), (() => { const r = el('div', 'tb-right'); r.append(connChip(), rowsBox()); return r; })());
     return;
   }
   const d = rv.dto;
@@ -403,7 +412,7 @@ function renderToolbar(): void {
     }
   }
 
-  right.append(rowsBox());
+  right.append(connChip(), rowsBox());
   if (d.columns.length) {
     const q = el('input', 'quick');
     q.placeholder = 'Filter rows…  (Ctrl+F)';
@@ -831,6 +840,7 @@ window.addEventListener('message', (ev: MessageEvent<ToWebview>) => {
     }
     case 'settings':
       settings = m.settings;
+      renderToolbar();
       for (const rv of runs.values()) {
         rv.grid?.setOptions({ wrap: wrap || settings.wrapText, maxCell: settings.maxCellLength, dateFormat: settings.dateFormat });
       }

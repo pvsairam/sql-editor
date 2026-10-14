@@ -76,6 +76,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     registerChatParticipant(ctx, store, schema, results, log)
   );
 
+  const syncChip = () => results.setConnection(store.active ? { name: store.active.name, environment: store.active.environment } : undefined);
+  syncChip();
+  ctx.subscriptions.push(store.onDidChange(syncChip));
+
   // keep clients fresh when settings change
   ctx.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -388,6 +392,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const c = store.active;
     if (c) {
       await schema.setFilter(c, '');
+    }
+  });
+  reg('fusionSqlDev.openTable', async (node: ObjectNode) => {
+    if (node?.obj) {
+      await query.openTable(node.obj.owner, node.obj.name);
     }
   });
   reg('fusionSqlDev.selectFromObject', async (node: ObjectNode) => {

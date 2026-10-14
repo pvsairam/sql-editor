@@ -170,6 +170,53 @@ export class QueryService implements vscode.Disposable {
     }
   }
 
+  /** Table browser: columns (with PK + comments), constraints, indexes and the first rows, as four result tabs. */
+  async openTable(owner: string, table: string): Promise<void> {
+    const conn = this.store.active;
+    if (!conn) {
+      return;
+    }
+    const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
+    const O = q(owner.toUpperCase());
+    const T = q(table.toUpperCase());
+    const sqls: [string, string][] = [
+      [
+        'Columns',
+        `SELECT c.column_id AS "#", c.column_name AS "COLUMN", c.data_type || CASE WHEN c.data_type IN ('VARCHAR2','NVARCHAR2','CHAR','NCHAR') THEN '(' || c.char_length || ')' WHEN c.data_type = 'NUMBER' AND c.data_precision IS NOT NULL THEN '(' || c.data_precision || CASE WHEN c.data_scale > 0 THEN ',' || c.data_scale END || ')' END AS "TYPE", CASE WHEN c.nullable = 'N' THEN 'NOT NULL' END AS "NULLABLE", CASE WHEN pk.column_name IS NOT NULL THEN 'PK' END AS "KEY", cc.comments AS "COMMENTS"
+` +
+          `FROM all_tab_columns c
+LEFT JOIN all_col_comments cc ON cc.owner = c.owner AND cc.table_name = c.table_name AND cc.column_name = c.column_name
+` +
+          `LEFT JOIN (SELECT acc.owner, acc.table_name, acc.column_name FROM all_constraints ac JOIN all_cons_columns acc ON acc.owner = ac.owner AND acc.constraint_name = ac.constraint_name WHERE ac.constraint_type = 'P') pk ON pk.owner = c.owner AND pk.table_name = c.table_name AND pk.column_name = c.column_name
+` +
+          `WHERE c.owner = ${O} AND c.table_name = ${T}
+ORDER BY c.column_id`
+      ],
+      [
+        'Constraints',
+        `SELECT ac.constraint_name AS "NAME", DECODE(ac.constraint_type, 'P', 'Primary key', 'U', 'Unique', 'R', 'Foreign key', 'C', 'Check', ac.constraint_type) AS "TYPE", (SELECT LISTAGG(acc.column_name, ', ') WITHIN GROUP (ORDER BY acc.position) FROM all_cons_columns acc WHERE acc.owner = ac.owner AND acc.constraint_name = ac.constraint_name) AS "COLUMNS", ac.r_constraint_name AS "REFERENCES", ac.status AS "STATUS"
+` +
+          `FROM all_constraints ac
+WHERE ac.owner = ${O} AND ac.table_name = ${T}
+ORDER BY ac.constraint_type, ac.constraint_name`
+      ],
+      [
+        'Indexes',
+        `SELECT ai.index_name AS "NAME", ai.uniqueness AS "UNIQUENESS", (SELECT LISTAGG(aic.column_name, ', ') WITHIN GROUP (ORDER BY aic.column_position) FROM all_ind_columns aic WHERE aic.index_owner = ai.owner AND aic.index_name = ai.index_name) AS "COLUMNS", ai.status AS "STATUS"
+` +
+          `FROM all_indexes ai
+WHERE ai.table_owner = ${O} AND ai.table_name = ${T}
+ORDER BY ai.index_name`
+      ],
+      ['Data', `SELECT *
+FROM ${owner}.${table}`]
+    ];
+    const recs = await Promise.all(sqls.map(([name, sql], i) => this.executeOne(conn, sql, undefined, i > 0, undefined, `[${name}] ${table}`)));
+    if (recs[0]) {
+      this.results.focusRun(recs[0].id);
+    }
+  }
+
   /** Run the statement under the cursor (or the selection) on several connections at once, one result tab per connection. */
   async runOnConnections(args?: RunArgs): Promise<void> {
     const editor = this.editorFor(args);
@@ -248,7 +295,7 @@ export class QueryService implements vscode.Disposable {
     this.emitter.fire(any);
   }
 
-  private async executeOne(conn: Connection, original: string, tag?: string, keepOthers = false, preBound?: string): Promise<RunRecord | undefined> {
+  private async executeOne(conn: Connection, original: string, tag?: string, keepOthers = false, preBound?: string, titleOverride?: string): Promise<RunRecord | undefined> {
     let effective: string;
     try {
       effective = prepareStatement(original).sql;
@@ -270,7 +317,7 @@ export class QueryService implements vscode.Disposable {
       return undefined;
     }
     const rec = this.results.beginRun({
-      title: (tag ? `[${tag}] ` : '') + oneLine(original, 36),
+      title: titleOverride ?? ((tag ? `[${tag}] ` : '') + oneLine(original, 36)),
       sql: original,
       executedSql: withBinds,
       connectionId: conn.id,

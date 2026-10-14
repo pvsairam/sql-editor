@@ -2,7 +2,7 @@
   "name": "fusion-sql-dev",
   "displayName": "Fusion SQL DEV",
   "description": "Oracle Fusion Cloud SQL worksheet for VS Code: run SQL against your Fusion pod through BI Publisher, with browser-session SSO, a fast result grid, schema browser, history and Copilot help.",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "publisher": "fusion-dev",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -241,6 +241,12 @@
         "icon": "$(clear-all)"
       },
       {
+        "command": "fusionSqlDev.openTable",
+        "title": "Open Table (columns, constraints, indexes, data)",
+        "category": "Fusion SQL",
+        "icon": "$(open-preview)"
+      },
+      {
         "command": "fusionSqlDev.selectFromObject",
         "title": "Select Top 100 Rows",
         "category": "Fusion SQL",
@@ -381,6 +387,10 @@
         },
         {
           "command": "fusionSqlDev.selectFromObject",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.openTable",
           "when": "false"
         },
         {
@@ -553,9 +563,19 @@
           "group": "3_edit@3"
         },
         {
-          "command": "fusionSqlDev.selectFromObject",
+          "command": "fusionSqlDev.openTable",
           "when": "view == fusionSqlDev.schema && viewItem == dbObject",
           "group": "inline@1"
+        },
+        {
+          "command": "fusionSqlDev.selectFromObject",
+          "when": "view == fusionSqlDev.schema && viewItem == dbObject",
+          "group": "inline@2"
+        },
+        {
+          "command": "fusionSqlDev.openTable",
+          "when": "view == fusionSqlDev.schema && viewItem == dbObject",
+          "group": "1_query@0"
         },
         {
           "command": "fusionSqlDev.selectFromObject",

@@ -26,6 +26,8 @@ export interface ViewSettings {
   /** Rows to fetch per run (the "Rows" box). */
   fetchSize: number;
   dateFormat: 'MM/DD/YYYY' | 'DD/MM/YYYY' | 'YYYY-MM-DD' | 'raw';
+  /** active connection, shown as a switcher chip */
+  connection?: { name: string; environment: string };
 }
 
 export type BindType = 'VARCHAR2' | 'NUMBER' | 'DATE' | 'TIMESTAMP';
@@ -61,4 +63,5 @@ export type FromWebview =
   | { type: 'close-run'; runId: string }
   | { type: 'pin'; runId: string; pinned: boolean }
   | { type: 'set-fetch-size'; value: number }
+  | { type: 'switch-connection' }
   | { type: 'log'; text: string };

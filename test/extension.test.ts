@@ -402,6 +402,17 @@ test('run on multiple connections: binds once, one tab per connection, concurren
   assert.deepEqual(new Set(starts.map((s: any) => s.run.connectionName)), new Set(['DEV', 'QA']));
 });
 
+test('table browser: four tabs (Columns focused), qualified names are quoted safely', async () => {
+  posted = [];
+  await run('fusionSqlDev.openTable', { obj: { owner: 'FUSION', name: "PER_ALL_PEOPLE_F", type: 'TABLE' } });
+  await waitFor(() => posted.filter((m) => m.type === 'run-error' || m.type === 'run-rows').length >= 4 && posted.find((m) => m.type === 'focus-run'));
+  const starts = posted.filter((m) => m.type === 'run-start');
+  assert.deepEqual(starts.map((s: any) => s.run.title).sort(), ['[Columns] PER_ALL_PEOPLE_F', '[Constraints] PER_ALL_PEOPLE_F', '[Data] PER_ALL_PEOPLE_F', '[Indexes] PER_ALL_PEOPLE_F']);
+  const cols = starts.find((s: any) => s.run.title.startsWith('[Columns]')).run;
+  assert.match(cols.sql, /c\.owner = 'FUSION' AND c\.table_name = 'PER_ALL_PEOPLE_F'/);
+  assert.equal(posted.find((m) => m.type === 'focus-run').runId, cols.runId);
+});
+
 test('connection delete removes secrets; legacy import scrubs passwords', async () => {
   host.ui.buttons = (_m, items) => (items.includes('Delete') ? 'Delete' : undefined);
   await run('fusionSqlDev.deleteConnection', 'c2');
