@@ -9,6 +9,7 @@ import { FusionError, errorMessage } from '../fusion/errors';
 import { Logger, QueryPage } from '../fusion/types';
 import { applyBinds, findBinds, prepareStatement, TypedBind } from '../sql/prepare';
 import { BindField } from '../results/protocol';
+import { promptBinds } from '../results/bindPanel';
 import { oneLine, splitStatements, statementAt } from '../sql/lexer';
 import { settings } from '../config';
 
@@ -174,8 +175,8 @@ export class QueryService implements vscode.Disposable {
     if (names.length === 0 || !settings.promptForBinds) {
       return sql;
     }
-    const fields: BindField[] = names.map((name) => this.lastBinds.get(name) ?? { name, value: '', isNull: false, type: 'VARCHAR2' });
-    const answer = await this.results.promptBinds(fields);
+    const fields: BindField[] = names.map((name) => this.lastBinds.get(name) ?? { name, value: '', isNull: false, type: /(^|_)DATE$|^DATE_|_DATE_/.test(name) ? 'DATE' : 'VARCHAR2' });
+    const answer = await promptBinds(this.ctx, fields);
     if (!answer) {
       return undefined;
     }

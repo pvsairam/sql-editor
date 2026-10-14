@@ -1,5 +1,5 @@
 import { Grid, SelectionInfo } from './grid.js';
-import { BindField, BindType, CopyFormat, FromWebview, RunDTO, ToWebview, ViewSettings } from './protocol.js';
+import { CopyFormat, FromWebview, RunDTO, ToWebview, ViewSettings } from './protocol.js';
 import { el, fmtMs, fmtNum, prettyValue } from './util.js';
 
 interface VsCodeApi {
@@ -81,15 +81,7 @@ function toast(text: string, level: 'info' | 'error' = 'info'): void {
   window.setTimeout(() => t.remove(), level === 'error' ? 5400 : 2200);
 }
 
-let openPrompt: string | undefined;
-
 function closeMenus(): void {
-  if (openPrompt) {
-    // dismissing the bind dialog any other way (backdrop click, panel blur) counts as Cancel so the host never waits forever
-    const id = openPrompt;
-    openPrompt = undefined;
-    send({ type: 'bind-cancel', promptId: id });
-  }
   overlay.textContent = '';
   overlay.classList.remove('open', 'modal');
 }
@@ -137,7 +129,7 @@ overlay.addEventListener('mousedown', (e) => {
 window.addEventListener(
   'keydown',
   (e) => {
-    if (e.key === 'Escape' && overlay.classList.contains('open') && !overlay.querySelector('.dialog')) {
+    if (e.key === 'Escape' && overlay.classList.contains('open')) {
       // capture phase: the grid stops propagation of keys it handles
       e.preventDefault();
       e.stopPropagation();
@@ -158,7 +150,7 @@ window.addEventListener('keydown', (e) => {
   }
 });
 window.addEventListener('blur', () => {
-  if (!overlay.classList.contains('modal') && !openPrompt) {
+  if (!overlay.classList.contains('modal')) {
     closeMenus();
   }
 });
@@ -180,6 +172,8 @@ function button(label: string, ico: string | undefined, title: string, onClick: 
 
 function renderTabs(): void {
   tabsEl.textContent = '';
+  // One result needs no tab strip (its title is in the toolbar); the strip appears with 2+ results.
+  tabsEl.classList.toggle('hidden', runs.size < 2);
   for (const rv of runs.values()) {
     const d = rv.dto;
     const t = el('div', 'tab' + (d.runId === activeId ? ' active' : '') + ` ${d.status}`);
@@ -452,6 +446,11 @@ function renderToolbar(): void {
     );
   }
   right.append(
+    button('', 'pin', d.pinned ? 'Unpin (this result is replaced by the next query)' : 'Pin: keep this result when you run another query', () => {
+      d.pinned = !d.pinned;
+      send({ type: 'pin', runId: d.runId, pinned: !!d.pinned });
+      refresh();
+    }, d.pinned ? 'icon on' : 'icon'),
     button('', 'rerun', 'Run this statement again', () => send({ type: 'rerun', runId: d.runId }), 'icon'),
     button('', 'code', 'Open the SQL in a worksheet', () => send({ type: 'open-sql', runId: d.runId }), 'icon')
   );
@@ -839,9 +838,6 @@ window.addEventListener('message', (ev: MessageEvent<ToWebview>) => {
     case 'toast':
       toast(m.text, m.level);
       break;
-    case 'bind-prompt':
-      showBindDialog(m.promptId, m.binds);
-      break;
     case 'focus-run':
       if (runs.has(m.runId)) {
         activate(m.runId);
@@ -852,80 +848,3 @@ window.addEventListener('message', (ev: MessageEvent<ToWebview>) => {
 
 refresh();
 send({ type: 'ready' });
-
-
-// ------------------------------------------------------------------------ bind dialog
-
-function showBindDialog(promptId: string, binds: BindField[]): void {
-  closeMenus();
-  openPrompt = promptId;
-  overlay.classList.add('open', 'modal');
-  const card = el('div', 'dialog');
-  const head = el('div', 'dialog-head');
-  head.append(el('span', 'dialog-title', 'Bind Variables'));
-  const x = el('span', 'dialog-x');
-  x.append(icon('close'));
-  head.append(x);
-  const grid = el('div', 'bind-grid');
-  for (const h of ['Parameter Name', 'Parameter Value', 'Is Null', 'Data Type']) {
-    grid.append(el('div', 'bind-h', h));
-  }
-  const rows = binds.map((b) => {
-    const name = el('div', 'bind-name', ':' + b.name);
-    const value = el('input', 'bind-value');
-    value.value = b.value;
-    value.placeholder = b.type === 'DATE' || b.type === 'TIMESTAMP' ? 'YYYY-MM-DD or YYYY-MM-DD HH:MI:SS' : '';
-    const nul = el('input', 'bind-null');
-    nul.type = 'checkbox';
-    nul.checked = b.isNull;
-    const type = el('select', 'bind-type');
-    for (const t of ['VARCHAR2', 'NUMBER', 'DATE', 'TIMESTAMP'] as BindType[]) {
-      const o = el('option', undefined, t);
-      o.value = t;
-      type.append(o);
-    }
-    type.value = b.type;
-    const sync = () => {
-      value.disabled = nul.checked;
-      value.classList.toggle('disabled', nul.checked);
-    };
-    nul.addEventListener('change', sync);
-    type.addEventListener('change', () => {
-      value.placeholder = type.value === 'DATE' || type.value === 'TIMESTAMP' ? 'YYYY-MM-DD or YYYY-MM-DD HH:MI:SS' : '';
-    });
-    sync();
-    const nc = el('div', 'bind-cell');
-    nc.append(nul);
-    grid.append(name, value, nc, type);
-    return { b, value, nul, type };
-  });
-  const foot = el('div', 'dialog-foot');
-  const done = (ok: boolean) => {
-    openPrompt = undefined;
-    closeMenus();
-    if (ok) {
-      send({ type: 'bind-submit', promptId, values: rows.map((r) => ({ name: r.b.name, value: r.value.value, isNull: r.nul.checked, type: r.type.value as BindType })) });
-    } else {
-      send({ type: 'bind-cancel', promptId });
-    }
-  };
-  foot.append(
-    button('Cancel', undefined, 'Cancel (Esc)', () => done(false), 'secondary'),
-    button('Clear', undefined, 'Clear all values', () => rows.forEach((r) => { r.value.value = ''; r.nul.checked = false; r.value.disabled = false; }), 'secondary'),
-    button('Execute', undefined, 'Run the query (Enter)', () => done(true))
-  );
-  x.addEventListener('click', () => done(false));
-  card.append(head, grid, foot);
-  card.addEventListener('keydown', (e) => {
-    e.stopPropagation();
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      done(true);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      done(false);
-    }
-  });
-  overlay.append(card);
-  rows[0]?.value.focus();
-}

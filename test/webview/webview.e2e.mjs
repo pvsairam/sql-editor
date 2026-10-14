@@ -296,26 +296,6 @@ await test(`100k rows load in-page (${Math.round(loadMs)} ms), sort and filter s
 });
 
 // ---- bind dialog, rows box, pin ----
-await test('bind dialog: modal with name/value/Is Null/type, Enter submits typed values', async () => {
-  await post({ type: 'bind-prompt', promptId: 'b1', binds: [{ name: '1', value: '', isNull: false, type: 'VARCHAR2' }, { name: 'DEPT', value: 'HR', isNull: false, type: 'VARCHAR2' }] });
-  await page.waitForSelector('.dialog .bind-value');
-  assert.match(await page.textContent('.dialog'), /Parameter Name[\s\S]*Parameter Value[\s\S]*Is Null[\s\S]*Data Type/);
-  await page.screenshot({ path: process.env.SHOT3 ?? '/tmp/claude-0/bind.png' });
-  await page.locator('.bind-value').first().fill('100000065388230');
-  await page.locator('.bind-type').first().selectOption('NUMBER');
-  await page.locator('.bind-null').nth(1).check();
-  await page.keyboard.press('Enter');
-  const m = (await sent()).filter((x) => x.type === 'bind-submit').pop();
-  assert.equal(m.promptId, 'b1');
-  assert.deepEqual(m.values, [{ name: '1', value: '100000065388230', isNull: false, type: 'NUMBER' }, { name: 'DEPT', value: 'HR', isNull: true, type: 'VARCHAR2' }]);
-  await page.waitForFunction(() => !document.querySelector('.dialog'));
-});
-await test('bind dialog: Escape cancels', async () => {
-  await post({ type: 'bind-prompt', promptId: 'b2', binds: [{ name: 'X', value: '', isNull: false, type: 'VARCHAR2' }] });
-  await page.waitForSelector('.dialog');
-  await page.keyboard.press('Escape');
-  assert.ok((await sent()).some((x) => x.type === 'bind-cancel' && x.promptId === 'b2'));
-});
 await test('Rows box accepts 1..1,000,000 and tells the host', async () => {
   const box = page.locator('.rows-input');
   await box.fill('250000');
@@ -328,9 +308,9 @@ await test('Rows box accepts 1..1,000,000 and tells the host', async () => {
   await box.press('Enter');
   assert.equal(await box.inputValue(), '1000000');
 });
-await test('pin icon on a tab notifies the host; run-start can drop replaced tabs', async () => {
+await test('single result hides the tab strip; pin button in toolbar notifies host; run-start can drop replaced tabs', async () => {
   const before = await page.$$eval('.tab', (t) => t.length);
-  await page.locator('.tab.active .pin').click({ force: true });
+  await page.locator('button[title^="Pin"]').click();
   assert.ok((await sent()).some((x) => x.type === 'pin' && x.pinned === true));
   await post({ type: 'run-start', run: { runId: 'r9', title: 'new', sql: 'select 1', connectionName: 'DEV', environment: 'DEV', status: 'running', startedAt: Date.now(), elapsedMs: 0, columns: [], rows: [], hasMore: false, loading: true }, drop: ['r1'] });
   await page.waitForFunction((n) => document.querySelectorAll('.tab').length === n, before);
@@ -339,6 +319,29 @@ await test('pin icon on a tab notifies the host; run-start can drop replaced tab
 
 await page.screenshot({ path: process.env.SHOT ?? '/tmp/claude-0/grid.png' });
 await test('no console or page errors', async () => assert.deepEqual(errors, []));
+
+// ---- bind dialog page ----
+const bd = await browser.newPage({ viewport: { width: 900, height: 620 } });
+bd.setDefaultTimeout(6000);
+await bd.goto(base + 'test/webview/bind.html');
+await bd.waitForFunction(() => window.__sent.some((m) => m.type === 'ready'));
+await bd.evaluate(() => window.postMessage({ type: 'init', binds: [{ name: '1', value: '', isNull: false, type: 'VARCHAR2' }, { name: 'P_AS_OF_DATE', value: '', isNull: false, type: 'DATE' }, { name: 'DEPT', value: 'HR', isNull: false, type: 'VARCHAR2' }] }, '*'));
+await test('bind dialog: centred card with name/value/Is Null/type; Enter submits typed values; Esc cancels', async () => {
+  await bd.waitForSelector('.dialog .bind-value');
+  assert.match(await bd.textContent('.dialog'), /Parameter Name[\s\S]*Parameter Value[\s\S]*Is Null[\s\S]*Data Type/);
+  const box = await bd.locator('.dialog').boundingBox();
+  assert.ok(Math.abs(box.x + box.width / 2 - 450) < 20 && Math.abs(box.y + box.height / 2 - 310) < 60, `dialog centre ${box.x + box.width / 2},${box.y + box.height / 2}`);
+  assert.equal(await bd.locator('.bind-type').nth(1).inputValue(), 'DATE');
+  await bd.screenshot({ path: process.env.SHOT3 ?? '/tmp/claude-0/bind.png' });
+  await bd.locator('.bind-value').first().fill('100000065388230');
+  await bd.locator('.bind-type').first().selectOption('NUMBER');
+  await bd.locator('.bind-null').nth(2).check();
+  await bd.keyboard.press('Enter');
+  const m = (await bd.evaluate(() => window.__sent)).filter((x) => x.type === 'submit').pop();
+  assert.deepEqual(m.values, [{ name: '1', value: '100000065388230', isNull: false, type: 'NUMBER' }, { name: 'P_AS_OF_DATE', value: '', isNull: false, type: 'DATE' }, { name: 'DEPT', value: 'HR', isNull: true, type: 'VARCHAR2' }]);
+  await bd.keyboard.press('Escape');
+  assert.ok((await bd.evaluate(() => window.__sent)).some((x) => x.type === 'cancel'));
+});
 
 // ---- connection form ----
 const form = await browser.newPage({ viewport: { width: 900, height: 820 } });

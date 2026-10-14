@@ -43,6 +43,9 @@ export class Uri {
   static file(p: string): Uri {
     return new Uri('file', p);
   }
+  static from(o: { scheme: string; path: string }): Uri {
+    return new Uri(o.scheme, o.path);
+  }
   static parse(s: string): Uri {
     return new Uri('https', s, s);
   }
@@ -183,6 +186,7 @@ export class FakeHost {
   config: Record<string, unknown> = {};
   webviewProviders = new Map<string, any>();
   chatParticipants: any[] = [];
+  panels: { viewType: string; handler?: (m: any) => void; posted: any[]; disposed: boolean; onDispose?: () => void }[] = [];
   registeredProviders: string[] = [];
   providers: Record<string, any> = {};
   activeTextEditor: any;
@@ -273,6 +277,34 @@ export function installFakeVscode(host: FakeHost, packageJson: any): void {
         host.webviewProviders.set(id, provider);
         return disposable();
       },
+      createWebviewPanel: (viewType: string) => {
+        const rec: (typeof host.panels)[number] = { viewType, posted: [], disposed: false };
+        host.panels.push(rec);
+        return {
+          iconPath: undefined,
+          webview: {
+            html: '',
+            cspSource: 'x',
+            asWebviewUri: (u: any) => u,
+            postMessage: async (m: unknown) => void rec.posted.push(m),
+            onDidReceiveMessage: (fn: (m: any) => void) => {
+              rec.handler = fn;
+              return new Disposable();
+            }
+          },
+          onDidDispose: (fn: () => void) => {
+            rec.onDispose = fn;
+            return new Disposable();
+          },
+          reveal() {},
+          dispose() {
+            if (!rec.disposed) {
+              rec.disposed = true;
+              rec.onDispose?.();
+            }
+          }
+        };
+      },
       createStatusBarItem: () => ({ show() {}, hide() {}, dispose() {}, text: '' }),
       onDidChangeActiveTextEditor: () => disposable(),
       showInformationMessage: async (text: string, ...rest: any[]) => message('info', text, rest),
@@ -313,9 +345,16 @@ export function installFakeVscode(host: FakeHost, packageJson: any): void {
         host.configListeners.push(fn);
         return disposable();
       },
-      openTextDocument: async (o: { content: string; language: string }) => {
-        const ed = host.makeEditor(o.content, o.language);
+      openTextDocument: async (o: { content: string; language: string } | Uri) => {
+        const isUri = o instanceof Uri;
+        const ed = host.makeEditor(isUri ? '' : o.content, isUri ? 'sql' : o.language);
+        if (isUri) {
+          ed.document.uri = o;
+        }
         return ed.document;
+      },
+      get textDocuments() {
+        return host.docs;
       },
       workspaceFolders: undefined,
       fs: {

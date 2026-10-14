@@ -230,29 +230,46 @@ test('script run: one result tab per statement, stops on the first error', async
   assert.ok(host.messages.some((m) => /Script stopped at statement 2 of 3/.test(m.text)));
 });
 
-test('bind variables: a real dialog in the results panel (named and :1 style), typed values, cancel', async () => {
-  host.activeTextEditor = host.makeEditor('SELECT * FROM DEMO_T WHERE id = :emp_id OR id = :1');
+test('bind variables: centred dialog tab (named and :1 style), typed values, cancel, date default', async () => {
+  const lastPanel = () => host.panels.filter((p) => p.viewType === 'fusionSqlDev.binds').pop()!;
+  const before = host.panels.length;
+  host.activeTextEditor = host.makeEditor('SELECT * FROM DEMO_T WHERE id = :emp_id OR id = :1 OR d = :p_as_of_date');
   posted = [];
   const done = run('fusionSqlDev.runStatement');
-  const prompt = await waitFor(() => posted.find((m) => m.type === 'bind-prompt'));
-  assert.deepEqual(prompt.binds.map((b: any) => b.name), ['EMP_ID', '1']);
-  await fromWebview({ type: 'bind-submit', promptId: prompt.promptId, values: [{ name: 'EMP_ID', value: '42', isNull: false, type: 'NUMBER' }, { name: '1', value: '', isNull: true, type: 'VARCHAR2' }] });
+  await waitFor(() => host.panels.length > before);
+  const panel = lastPanel();
+  panel.handler!({ type: 'ready' });
+  const init = await waitFor(() => panel.posted.find((m) => m.type === 'init'));
+  assert.deepEqual(init.binds.map((b: any) => [b.name, b.type]), [['EMP_ID', 'VARCHAR2'], ['1', 'VARCHAR2'], ['P_AS_OF_DATE', 'DATE']]);
+  panel.handler!({ type: 'submit', values: [{ name: 'EMP_ID', value: '42', isNull: false, type: 'NUMBER' }, { name: '1', value: '', isNull: true, type: 'VARCHAR2' }, { name: 'P_AS_OF_DATE', value: '2024-01-31', isNull: false, type: 'DATE' }] });
   await done;
   await waitFor(() => posted.find((m) => m.type === 'run-rows'));
-  assert.equal(posted.find((m) => m.type === 'run-start').run.sql, 'SELECT * FROM DEMO_T WHERE id = :emp_id OR id = :1', 'history keeps the :bind form');
-  // remembered on the next prompt
+  assert.ok(panel.disposed, 'dialog closes after Execute');
+  assert.equal(posted.find((m) => m.type === 'run-start').run.sql, 'SELECT * FROM DEMO_T WHERE id = :emp_id OR id = :1 OR d = :p_as_of_date', 'history keeps the :bind form');
+  // remembered, and cancel runs nothing
   posted = [];
+  const n2 = host.panels.length;
   const again = run('fusionSqlDev.runStatement');
-  const p2 = await waitFor(() => posted.find((m) => m.type === 'bind-prompt'));
-  assert.equal(p2.binds[0].value, '42');
-  await fromWebview({ type: 'bind-cancel', promptId: p2.promptId });
+  await waitFor(() => host.panels.length > n2);
+  const p2 = lastPanel();
+  p2.handler!({ type: 'ready' });
+  assert.equal((await waitFor(() => p2.posted.find((m) => m.type === 'init'))).binds[0].value, '42');
+  p2.handler!({ type: 'cancel' });
   await again;
-  assert.ok(!posted.some((m) => m.type === 'run-start'), 'cancelling the dialog runs nothing');
+  assert.ok(!posted.some((m) => m.type === 'run-start'));
+  // closing the tab with the X also cancels
+  const n3 = host.panels.length;
+  const closed = run('fusionSqlDev.runStatement');
+  await waitFor(() => host.panels.length > n3);
+  lastPanel().onDispose!();
+  await closed;
+  assert.ok(!posted.some((m) => m.type === 'run-start'));
   // invalid number is reported in the results, not thrown
-  posted = [];
+  const n4 = host.panels.length;
   const bad = run('fusionSqlDev.runStatement');
-  const p3 = await waitFor(() => posted.find((m) => m.type === 'bind-prompt'));
-  await fromWebview({ type: 'bind-submit', promptId: p3.promptId, values: [{ name: 'EMP_ID', value: 'abc', isNull: false, type: 'NUMBER' }, { name: '1', value: 'x', isNull: false, type: 'VARCHAR2' }] });
+  await waitFor(() => host.panels.length > n4);
+  const p4 = lastPanel();
+  p4.handler!({ type: 'submit', values: [{ name: 'EMP_ID', value: 'abc', isNull: false, type: 'NUMBER' }, { name: '1', value: 'x', isNull: false, type: 'VARCHAR2' }, { name: 'P_AS_OF_DATE', value: '2024-01-31', isNull: false, type: 'DATE' }] });
   await bad;
   assert.match((await waitFor(() => posted.find((m) => m.type === 'run-error'))).error.message, /not a valid NUMBER/);
 });
@@ -365,7 +382,8 @@ test('new worksheet opens a SQL document bound to the active connection', async 
   await run('fusionSqlDev.newWorksheet');
   const doc = host.docs[host.docs.length - 1];
   assert.equal(doc.languageId, 'sql');
-  assert.match(doc.getText(), /Fusion SQL worksheet · DEV/);
+  assert.equal(doc.getText(), '', 'worksheets start blank');
+  assert.match(doc.uri.path, /^Worksheet \d+\.sql$/);
   assert.ok(ctx.workspaceState.get('fusionSqlDev.docConnections')[doc.uri.toString()] === 'c1');
 });
 

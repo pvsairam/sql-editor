@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.1
+- Bind-variable dialog is now a **centred tab in the editor area** (a webview cannot draw outside its own panel); `P_*_DATE`-style names default to DATE; dates accept `YYYY-MM-DD` or `MM/DD/YYYY`.
+- **New worksheets are blank** and named `Worksheet 1`, `Worksheet 2`, ... (no starter comments).
+- The result tab strip is hidden while there is only one result; the pin moved to the toolbar.
+
 ## 2.1.0
 - **SSO via your browser (new, recommended for SSO pods)**: choose *SSO* → *Browser session* and pick Chrome, Edge, Brave or a custom path (like SQL Connect). A window opens on your pod, you sign in with your company login (MFA included), the window closes itself and the session is stored in VS Code secure storage. No IAM administrator or OAuth application needed. A private browser profile keeps your IdP session, so later sign-ins are one click. *OAuth application* remains available as the second SSO type.
 - New logo.

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'crypto';
-import { BindField, RunDTO, RunStatus, ToWebview, ViewSettings, FromWebview } from './protocol';
+import { RunDTO, RunStatus, ToWebview, ViewSettings, FromWebview } from './protocol';
 import { settings } from '../config';
 
 export interface RunRecord {
@@ -41,7 +41,6 @@ export class ResultsView implements vscode.WebviewViewProvider, vscode.Disposabl
   private readonly runs = new Map<string, RunRecord>();
   private activeRunId?: string;
   private handlers?: ResultsHandlers;
-  private bindWaiters = new Map<string, (v: BindField[] | undefined) => void>();
   /** Row limit chosen in the Rows box (persisted by the caller); falls back to the setting. */
   rowLimitOverride?: number;
   private readonly disposables: vscode.Disposable[] = [];
@@ -73,15 +72,6 @@ export class ResultsView implements vscode.WebviewViewProvider, vscode.Disposabl
     this.post({ type: 'settings', settings: this.viewSettings() });
   }
 
-  /** Show the bind-variable dialog inside the results panel. Resolves undefined when cancelled. */
-  async promptBinds(binds: BindField[]): Promise<BindField[] | undefined> {
-    const promptId = `b${Date.now().toString(36)}`;
-    const answer = new Promise<BindField[] | undefined>((resolve) => this.bindWaiters.set(promptId, resolve));
-    this.post({ type: 'bind-prompt', promptId, binds });
-    await this.reveal(false);
-    return answer;
-  }
-
   get(runId: string): RunRecord | undefined {
     return this.runs.get(runId);
   }
@@ -102,17 +92,11 @@ export class ResultsView implements vscode.WebviewViewProvider, vscode.Disposabl
       if (m.type === 'ready') {
         this.ready = true;
         // `init` carries the complete current state, so queued run messages would only duplicate it; keep toasts.
-        const toasts = this.pending.splice(0).filter((p) => p.type === 'toast' || p.type === 'bind-prompt');
+        const toasts = this.pending.splice(0).filter((p) => p.type === 'toast');
         this.post({ type: 'init', runs: this.all().map((r) => this.dto(r)), activeRunId: this.activeRunId, settings: this.viewSettings() }, true);
         for (const p of toasts) {
           void this.view?.webview.postMessage(p);
         }
-        return;
-      }
-      if (m.type === 'bind-submit' || m.type === 'bind-cancel') {
-        const w = this.bindWaiters.get(m.promptId);
-        this.bindWaiters.delete(m.promptId);
-        w?.(m.type === 'bind-submit' ? m.values : undefined);
         return;
       }
       if (m.type === 'pin') {
@@ -127,10 +111,6 @@ export class ResultsView implements vscode.WebviewViewProvider, vscode.Disposabl
     view.onDidDispose(() => {
       this.view = undefined;
       this.ready = false;
-      for (const [, w] of this.bindWaiters) {
-        w(undefined);
-      }
-      this.bindWaiters.clear();
     });
   }
 

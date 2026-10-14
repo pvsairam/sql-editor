@@ -153,11 +153,19 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   reg('fusionSqlDev.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', '@ext:fusion-dev.fusion-sql-dev'));
 
   reg('fusionSqlDev.newWorksheet', async () => {
-    const conn = store.active;
-    const header = `-- Fusion SQL worksheet${conn ? ` · ${conn.name}` : ''}\n-- Ctrl+Enter runs the statement under the cursor · F5 runs the whole script\n\nSELECT 'Hello, Fusion' AS greeting, SYSDATE AS today FROM dual;\n`;
-    const editor = await openSqlDocument(header);
-    const line = editor.document.lineCount - 2;
-    editor.selection = new vscode.Selection(line, 0, line, 0);
+    // Blank, numbered like SQL Developer: "Worksheet 1", "Worksheet 2", ... (an untitled doc is named after its first line, so no header comments).
+    const used = new Set(vscode.workspace.textDocuments.map((d) => d.uri.path));
+    let n = 1;
+    while (used.has(`Worksheet ${n}.sql`) || used.has(`/Worksheet ${n}.sql`)) {
+      n++;
+    }
+    const uri = vscode.Uri.from({ scheme: 'untitled', path: `Worksheet ${n}.sql` });
+    const doc = await vscode.workspace.openTextDocument(uri);
+    const editor = await vscode.window.showTextDocument(doc, { preview: false });
+    if (store.activeId) {
+      await query.bindDocToConnection(doc.uri, store.activeId);
+    }
+    void editor;
   });
   reg('fusionDevAssistant.start', () => vscode.commands.executeCommand('fusionSqlDev.newWorksheet'));
 

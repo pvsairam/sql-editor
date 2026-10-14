@@ -44,8 +44,7 @@ export type ToWebview =
   | { type: 'run-error'; runId: string; status: RunStatus; error: { message: string; hint?: string; kind: string }; elapsedMs: number }
   | { type: 'settings'; settings: ViewSettings }
   | { type: 'toast'; text: string; level: 'info' | 'error' }
-  | { type: 'focus-run'; runId: string }
-  | { type: 'bind-prompt'; promptId: string; binds: BindField[] };
+  | { type: 'focus-run'; runId: string };
 
 export type CopyFormat = 'tsv' | 'csv' | 'json' | 'markdown' | 'insert' | 'inlist';
 
@@ -61,6 +60,4 @@ export type FromWebview =
   | { type: 'close-run'; runId: string }
   | { type: 'pin'; runId: string; pinned: boolean }
   | { type: 'set-fetch-size'; value: number }
-  | { type: 'bind-submit'; promptId: string; values: BindField[] }
-  | { type: 'bind-cancel'; promptId: string }
   | { type: 'log'; text: string };
