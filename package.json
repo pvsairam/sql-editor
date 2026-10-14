@@ -2,7 +2,7 @@
   "name": "fusion-sql-dev",
   "displayName": "Fusion SQL DEV",
   "description": "Oracle Fusion Cloud SQL worksheet for VS Code: run SQL against your Fusion pod through BI Publisher, with browser-session SSO, a fast result grid, schema browser, history and Copilot help.",
-  "version": "2.4.1",
+  "version": "2.5.0",
   "publisher": "fusion-dev",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -205,6 +205,11 @@
         "title": "Install / Repair Helper Report on Pod",
         "category": "Fusion SQL",
         "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "fusionSqlDev.saveHelperFile",
+        "title": "Save Helper Catalog File… (manual upload)",
+        "category": "Fusion SQL"
       },
       {
         "command": "fusionSqlDev.importRuntimeFile",
@@ -555,6 +560,11 @@
           "command": "fusionSqlDev.importRuntimeFile",
           "when": "view == fusionSqlDev.connections && viewItem =~ /^connection/",
           "group": "2_runtime@2"
+        },
+        {
+          "command": "fusionSqlDev.saveHelperFile",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection/",
+          "group": "2_runtime@3"
         },
         {
           "command": "fusionSqlDev.editConnection",

@@ -28,6 +28,7 @@ export interface FormData {
   browserPath: string;
   dataSource: string;
   catalogRoot: string;
+  helperPath: string;
   allowInsecureTls: boolean;
 }
 
@@ -71,6 +72,7 @@ function toForm(c?: Connection): FormData {
     browserPath: c?.browser?.path ?? '',
     dataSource: c?.dataSource ?? '',
     catalogRoot: c?.catalogRoot ?? '',
+    helperPath: c?.helperPath ?? '',
     allowInsecureTls: c?.allowInsecureTls ?? false
   };
 }
@@ -128,6 +130,7 @@ function draftConnection(id: string, f: FormData, prev?: Connection): Connection
     createdAt: prev?.createdAt ?? Date.now(),
     dataSource: f.dataSource.trim() && f.dataSource.trim() !== 'ApplicationDB_FSCM' ? f.dataSource.trim() : undefined,
     catalogRoot: f.catalogRoot.trim() ? f.catalogRoot.trim().replace(/\/+$/, '') : undefined,
+    helperPath: f.helperPath.trim() || undefined,
     allowInsecureTls: f.allowInsecureTls || undefined,
     runtimeConsent: prev?.runtimeConsent,
     oauth: f.auth === 'oauth' ? { issuer: f.issuer.trim().replace(/\/+$/, ''), clientId: f.clientId.trim(), scope: f.scope.trim(), flow: f.flow } : undefined,

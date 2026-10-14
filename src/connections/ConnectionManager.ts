@@ -40,7 +40,7 @@ export class ConnectionManager {
   }
 
   private signature(c: Connection): string {
-    return JSON.stringify([c.url, c.username, c.auth, c.dataSource, c.catalogRoot, c.allowInsecureTls, c.oauth, c.browser, c.tokenKind, settings.timeoutMs, settings.loopbackPort, settings.redirectHost]);
+    return JSON.stringify([c.url, c.username, c.auth, c.dataSource, c.catalogRoot, c.allowInsecureTls, c.oauth, c.browser, c.helperPath, c.tokenKind, settings.timeoutMs, settings.loopbackPort, settings.redirectHost]);
   }
 
   /** Build an OAuth client for a (possibly unsaved) connection; the token store is injectable for "Validate". */
@@ -152,7 +152,7 @@ export class ConnectionManager {
       timeoutMs: settings.timeoutMs,
       allowInsecureTls: c.allowInsecureTls,
       log: this.log,
-      knownReportPath: c.reportPath
+      knownReportPath: c.helperPath || c.reportPath
     });
     this.clients.set(c.id, { client, signature: sig });
     return client;

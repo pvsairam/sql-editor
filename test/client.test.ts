@@ -4,7 +4,7 @@ import { FusionClient } from '../src/fusion/bip';
 import { FusionError } from '../src/fusion/errors';
 import { BasicSession, TokenSession } from '../src/auth/sessions';
 import { MockFusion, MockOptions } from './helpers/mockFusion';
-import { buildRuntime } from '../src/fusion/runtime';
+import { buildRuntime, buildCatalogArchive } from '../src/fusion/runtime';
 import { readZip } from '../src/fusion/zip';
 
 async function withMock<T>(opts: MockOptions, fn: (m: MockFusion) => Promise<T>): Promise<T> {
@@ -212,5 +212,26 @@ test('removeRuntime deletes both objects and the client rediscovers nothing', as
     await c.removeRuntime();
     assert.equal(m.objects.size, 0);
     assert.equal(await c.discoverRuntime(), undefined);
+  });
+});
+
+test('report creation denied (Security violation): clear explanation + manual-upload workaround; a hand-imported helper is then found', async () => {
+  await withMock({ denyReports: true }, async (m) => {
+    const c = basic(m);
+    await assert.rejects(c.installRuntime(), (e: FusionError) => e.kind === 'permission' && e.code === 'SECURITY_VIOLATION' && /REPORT/.test(e.hint ?? '') && /Save Helper Catalog File/.test(e.hint ?? ''));
+    assert.ok(m.objects.has('/~jdoe/FusionSqlDev/v2/dm.xdm'), 'data model part was uploaded');
+    // user imports the archive by hand through the catalog UI -> objects appear at the expected paths
+    const names = readZip(buildCatalogArchive({ catalogRoot: '/~jdoe', dataSource: 'ApplicationDB_FSCM' })).map((e) => e.name);
+    assert.deepEqual(names.sort(), ['v2/csv.xdoz', 'v2/dm.xdmz', 'v2/~metadata.meta', '~metadata.meta']);
+    const art = buildRuntime({ catalogRoot: '/~jdoe', dataSource: 'ApplicationDB_FSCM' });
+    m.objects.set(art.reportPath, { type: 'xdoz', zip: art.reportZip, files: { '_report.xdo': readZip(art.reportZip).find((e) => e.name === '_report.xdo')!.data.toString() } });
+    assert.equal(await c.discoverRuntime(), art.reportPath);
+  });
+});
+
+test('an explicit helper path (connection setting) is tried first', async () => {
+  await withMock({ preinstalled: ['/Custom/Team/csv.xdo'] }, async (m) => {
+    const c = new FusionClient({ baseUrl: m.url, auth: new BasicSession('jdoe', 's3cret'), knownReportPath: '/Custom/Team/csv.xdo', timeoutMs: 10000 });
+    assert.equal(await c.discoverRuntime(), '/Custom/Team/csv.xdo');
   });
 });

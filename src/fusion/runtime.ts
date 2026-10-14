@@ -222,6 +222,20 @@ export function buildRuntime(spec: RuntimeSpec): RuntimeArtifacts {
   return { ...paths, dataModelZip, reportZip };
 }
 
+/** A catalog archive (.xdrz) for manual upload through the BI Publisher Catalog UI (Upload). */
+export function buildCatalogArchive(spec: RuntimeSpec): Buffer {
+  const art = buildRuntime(spec);
+  const enc = encodeURIComponent;
+  const meta = (p: string) => Buffer.from(metaXml({ DESCRIPTION: '', propertyMap: '1', path: enc(p) }), 'utf8');
+  return writeZip([
+    { name: '~metadata.meta', data: meta(art.rootFolder) },
+    { name: `${art.versionFolder.slice(art.rootFolder.length + 1)}/`, data: Buffer.alloc(0) },
+    { name: `${art.versionFolder.slice(art.rootFolder.length + 1)}/~metadata.meta`, data: meta(art.versionFolder) },
+    { name: `${art.versionFolder.slice(art.rootFolder.length + 1)}/dm.xdmz`, data: art.dataModelZip },
+    { name: `${art.versionFolder.slice(art.rootFolder.length + 1)}/csv.xdoz`, data: art.reportZip }
+  ]);
+}
+
 /** Rewrite `<dataModel url="...">` inside a report archive so it points at our data model. */
 export function patchReportZip(reportZip: Buffer, dmPath: string): Buffer {
   const entries: ZipEntry[] = readZip(reportZip).map((e) => {

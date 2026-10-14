@@ -397,7 +397,7 @@ form.setDefaultTimeout(6000);
 await form.goto(base + 'test/webview/connection.html');
 const fsent = () => form.evaluate(() => window.__sent);
 await form.waitForFunction(() => window.__sent.some((m) => m.type === 'ready'));
-const initForm = { name: '', environment: 'DEV', auth: 'basic', url: '', username: '', password: '', issuer: '', clientId: '', scope: 'urn:opc:resource:consumer::all', flow: 'authorization_code', clientSecret: '', tokenKind: 'bearer', token: '', dataSource: '', catalogRoot: '', allowInsecureTls: false };
+const initForm = { name: '', environment: 'DEV', auth: 'basic', url: '', username: '', password: '', issuer: '', clientId: '', scope: 'urn:opc:resource:consumer::all', flow: 'authorization_code', clientSecret: '', tokenKind: 'bearer', token: '', dataSource: '', catalogRoot: '', helperPath: '', allowInsecureTls: false };
 await form.evaluate((f) => window.postMessage({ type: 'init', id: 'c1', editing: false, form: f, hasPassword: false, hasSecret: false, hasToken: false, redirectUrl: 'http://localhost:53682/callback' }, '*'), initForm);
 await test('connection form: fields, auth methods, SSO section, validate + create messages', async () => {
   await form.waitForSelector('.card');

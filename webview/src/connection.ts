@@ -18,6 +18,7 @@ interface FormData {
   browserPath: string;
   dataSource: string;
   catalogRoot: string;
+  helperPath: string;
   allowInsecureTls: boolean;
 }
 type ToForm =
@@ -150,11 +151,12 @@ function render(): void {
   }
 
   const adv = el('details', 'advanced');
-  adv.open = !!(form.dataSource || form.catalogRoot || form.allowInsecureTls);
+  adv.open = !!(form.dataSource || form.catalogRoot || form.helperPath || form.allowInsecureTls);
   adv.append(el('summary', undefined, 'Advanced options'));
   adv.append(
     field('BI Publisher data source', text('dataSource', 'ApplicationDB_FSCM (default) - or ApplicationDB_HCM, ApplicationDB_CRM'), {}),
-    field('Catalog folder for the helper report', text('catalogRoot', 'empty = your personal folder (/~user)'), {})
+    field('Catalog folder for the helper report', text('catalogRoot', 'empty = your personal folder (/~user)'), {}),
+    field('Existing helper report (full catalog path, optional)', text('helperPath', 'e.g. /~user/FusionQuery/v1/csv.xdo - used first if set'), {})
   );
   const tls = el('label', 'check');
   const cb = el('input');

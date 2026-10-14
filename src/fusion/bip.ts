@@ -349,6 +349,17 @@ export class FusionClient {
         }
         return this.upload(path, type, zipped, true);
       }
+      if (e instanceof FusionError && /security violation/i.test(e.message)) {
+        throw new FusionError('permission', `Could not upload ${path}: ${e.message}`, {
+          hint:
+            (type === 'xdoz' ? 'The data model was uploaded, but BI Publisher refused to create the REPORT: creating reports needs a BI authoring role (for example "BI Author Role" / "BI Administrator Role"), which is separate from owning the folder - even for a Fusion system administrator. ' : 'BI Publisher refused this upload. ') +
+            'Quickest workaround: run "Fusion SQL: Save Helper Catalog File…", then in BI Publisher open Catalog → My Folders → Upload and select that file (you already did this successfully before). Afterwards Test Connection finds it. ' +
+            'Or assign yourself a BI authoring role in the Security Console and retry.',
+          status: e.status,
+          code: 'SECURITY_VIOLATION',
+          cause: e
+        });
+      }
       if (e instanceof FusionError && (e.kind === 'permission' || e.kind === 'oracle' || e.kind === 'runtime-missing' || e.kind === 'http')) {
         throw new FusionError('permission', `Could not upload ${path}: ${e.message}`, {
           hint:

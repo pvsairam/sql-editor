@@ -20,6 +20,7 @@ import { StatusBarController } from './statusBar';
 import { Connection, HistoryEntry } from './model';
 import { errorMessage, FusionError } from './fusion/errors';
 import { settings } from './config';
+import { buildCatalogArchive } from './fusion/runtime';
 
 const DOCS = 'https://github.com/pvsairam/sql-editor/blob/main/docs';
 
@@ -393,6 +394,25 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }
   });
 
+  reg('fusionSqlDev.saveHelperFile', async (arg?: unknown) => {
+    const c = await pickConnection(arg, 'Create the helper file for which connection?');
+    if (!c) {
+      return;
+    }
+    const spec = { catalogRoot: c.catalogRoot ?? `/~${c.username}`, dataSource: c.dataSource || 'ApplicationDB_FSCM' };
+    const target = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(require('path').join(require('os').homedir(), 'Downloads', 'FusionSqlDevHelper.xdrz')), filters: { 'BI Publisher catalog archive': ['xdrz'] }, title: 'Save helper catalog file' });
+    if (!target) {
+      return;
+    }
+    await vscode.workspace.fs.writeFile(target, buildCatalogArchive(spec));
+    const hint = `${spec.catalogRoot}/FusionSqlDev/v2/csv.xdo`;
+    const pick = await vscode.window.showInformationMessage(`Saved. In BI Publisher: Catalog → My Folders → Upload (or Unarchive) → select this file. It should create ${hint}; then use Test Connection.`, 'Reveal File', 'Test Connection');
+    if (pick === 'Reveal File') {
+      await vscode.commands.executeCommand('revealFileInOS', target);
+    } else if (pick === 'Test Connection') {
+      await vscode.commands.executeCommand('fusionSqlDev.testConnection', c.id);
+    }
+  });
   reg('fusionSqlDev.refreshConnections', () => connectionTree.refresh());
 
   // ------------------------------------------------------------------------ schema commands

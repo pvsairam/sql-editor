@@ -43,6 +43,10 @@ connection (a separate folder `v2-hcm` is used).
 Helpers imported by hand for 1.x/fusion-query (`/~user/FusionQuery/v1/csv.xdo` or
 `/Custom/FusionQuery/Proxy/v1/csv.xdo`) are discovered automatically and reused.
 
+## "Security violation … expect: 514, actual: 0"
+
+BI Publisher uploaded the data model but refused to create the report. Owning *My Folders* is not enough: creating reports needs a BI authoring role (e.g. *BI Author Role* / *BI Administrator Role*, assigned in the Security Console), even for a Fusion system administrator. Either get the role, or: **Save Helper Catalog File…** → BI Publisher *Catalog → My Folders → Upload* → pick the `.xdrz`, then *Test Connection*. If the objects end up at a different path, put it in the connection's *Existing helper report* field.
+
 ## Shared installation (admins)
 
 An administrator can install the helper once in a shared folder (e.g. `/Shared Folders/Custom/FusionSqlDev`) by

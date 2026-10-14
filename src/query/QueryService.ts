@@ -435,8 +435,10 @@ FROM ${owner}.${table}`]
     } catch (e) {
       const fe = e instanceof FusionError ? e : undefined;
       this.log.error(`Helper install failed: ${errorMessage(e)}`);
-      const pick = await vscode.window.showErrorMessage(`Could not install the helper report: ${fe?.message ?? errorMessage(e)}`, { detail: fe?.hint }, 'Use Catalog File…', 'Show Log');
-      if (pick === 'Use Catalog File…') {
+      const pick = await vscode.window.showErrorMessage(`Could not install the helper report: ${fe?.message ?? errorMessage(e)}`, { detail: fe?.hint }, 'Save Helper File…', 'Use Catalog File…', 'Show Log');
+      if (pick === 'Save Helper File…') {
+        void vscode.commands.executeCommand('fusionSqlDev.saveHelperFile', conn.id);
+      } else if (pick === 'Use Catalog File…') {
         void vscode.commands.executeCommand('fusionSqlDev.importRuntimeFile', conn.id);
       } else if (pick === 'Show Log') {
         void vscode.commands.executeCommand('fusionSqlDev.showLog');

@@ -30,6 +30,8 @@ export interface Connection {
   tokenKind?: 'bearer' | 'cookie';
   /** Decided once per connection: may we upload the helper report to the pod? */
   runtimeConsent?: 'granted' | 'declined';
+  /** Optional: full catalog path of an existing helper report (e.g. imported by hand); tried first. */
+  helperPath?: string;
   /** Where the helper report was last found/installed. */
   reportPath?: string;
   createdAt: number;

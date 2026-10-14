@@ -26,6 +26,8 @@ export interface MockOptions {
   readOnlyCatalog?: boolean;
   /** uploadObject fails when the object already exists (some releases do not overwrite). */
   refuseOverwrite?: boolean;
+  /** Data models may be uploaded but reports are refused (user lacks a BI authoring role). */
+  denyReports?: boolean;
   /** Rows of table DEMO_T. */
   rows?: number;
 }
@@ -56,6 +58,7 @@ export class MockFusion {
       preinstalled: [],
       readOnlyCatalog: false,
       refuseOverwrite: false,
+      denyReports: false,
       rows: 2500,
       ...opts
     };
@@ -206,6 +209,11 @@ export class MockFusion {
           if (this.o.readOnlyCatalog) {
             log(500);
             this.fault(res, 'User does not have permission to upload objects');
+            return;
+          }
+          if (this.o.denyReports && type === 'xdoz') {
+            log(500);
+            this.fault(res, `Security violation: ${p}, user: ${this.o.user}, expect: 514, actual: 0`);
             return;
           }
           if (this.o.refuseOverwrite && this.objects.has(p)) {
