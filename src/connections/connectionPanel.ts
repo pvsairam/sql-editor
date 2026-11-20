@@ -6,7 +6,7 @@ import { ConnectionManager } from './ConnectionManager';
 import { FusionClient, normalizeBaseUrl } from '../fusion/bip';
 import { FusionError, errorMessage } from '../fusion/errors';
 import { AuthSession, Logger } from '../fusion/types';
-import { BasicSession, OAuthSession, TokenSession } from '../auth/sessions';
+import { BasicSession, BrowserSession, BrowserSessionData, OAuthSession, TokenSession, parseBrowserSession, serializeBrowserSession } from '../auth/sessions';
 import { OAuthFlow, TokenSet, TokenStore } from '../auth/oauth';
 
 /** Data exchanged with the connection form webview. Keep in sync with webview/src/connection.ts. */
@@ -165,7 +165,7 @@ export function openConnectionForm(ctx: vscode.ExtensionContext, store: Connecti
   const post = (m: ToForm) => void panel.webview.postMessage(m);
   let validationTokens: MemoryTokens | undefined; // tokens obtained while validating an SSO setup are kept for the save
   let validationKey = '';
-  let validationCookie: string | undefined;
+  let validationBrowser: BrowserSessionData | undefined;
 
   const sessionFor = async (f: FormData, conn: Connection): Promise<AuthSession> => {
     if (f.auth === 'basic') {
@@ -183,8 +183,8 @@ export function openConnectionForm(ctx: vscode.ExtensionContext, store: Connecti
       return new TokenSession(conn.username, f.tokenKind, t.replace(/^bearer\s+/i, ''));
     }
     if (f.auth === 'browser') {
-      validationCookie ??= (await store.getPasted(id)) || (await manager.captureBrowserSession(conn));
-      return new TokenSession(conn.username, 'cookie', validationCookie);
+      validationBrowser ??= parseBrowserSession(await store.getPasted(id)) ?? (await manager.captureBrowserSession(conn));
+      return new BrowserSession(conn.username, validationBrowser);
     }
     const key = JSON.stringify([f.issuer, f.clientId, f.scope, f.flow]);
     if (!validationTokens || validationKey !== key) {
@@ -237,6 +237,10 @@ export function openConnectionForm(ctx: vscode.ExtensionContext, store: Connecti
             timeoutMs: 60000
           });
           const r = await client.test(async () => false);
+          if (!r.authenticated && m.form.auth === 'browser') {
+            // Clear stale/rejected browser session so clicking Validate Setup again opens a fresh sign-in.
+            validationBrowser = undefined;
+          }
           const steps = [
             { label: 'Server reachable & signed in', ok: r.authenticated },
             { label: r.runtimeReady ? `Helper report found (${r.reportPath})` : 'Helper report (installed automatically on first run, after you confirm)', ok: r.runtimeReady }
@@ -275,8 +279,8 @@ export function openConnectionForm(ctx: vscode.ExtensionContext, store: Connecti
             await store.tokenStore(id).save(validationTokens.tokens);
           }
         }
-        if (m.form.auth === 'browser' && validationCookie) {
-          await store.setPasted(id, validationCookie);
+        if (m.form.auth === 'browser' && validationBrowser) {
+          await store.setPasted(id, serializeBrowserSession(validationBrowser));
         }
         if (m.form.auth === 'token' && m.form.token.trim()) {
           await store.setPasted(id, m.form.token.trim().replace(/^bearer\s+/i, ''));

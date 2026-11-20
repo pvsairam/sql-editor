@@ -228,6 +228,99 @@ FROM ${owner}.${table}`]
     }
   }
 
+  /** Run the statement under the cursor (or selection) asynchronously via ScheduleReportWSSService. */
+  async runStatementBackground(args?: RunArgs): Promise<void> {
+    const editor = this.editorFor(args);
+    if (!editor) {
+      void vscode.window.showInformationMessage('Open a SQL file (or use "Fusion SQL: New SQL Worksheet") first.');
+      return;
+    }
+    const doc = editor.document;
+    const text =
+      args?.offset !== undefined
+        ? statementAt(doc.getText(), args.offset, { blankLineEndsStatement: settings.blankLineEndsStatement })?.text
+        : !editor.selection.isEmpty
+          ? doc.getText(editor.selection)
+          : statementAt(doc.getText(), doc.offsetAt(editor.selection.active), { blankLineEndsStatement: settings.blankLineEndsStatement })?.text;
+    if (!text?.trim()) {
+      void vscode.window.showInformationMessage('Nothing to run here. Put the cursor inside a SQL statement.');
+      return;
+    }
+    const conn = await this.resolveConnection(doc.uri);
+    if (!conn) {
+      return;
+    }
+    if (conn.environment === 'PROD' && !this.prodConfirmed.has(conn.id)) {
+      const ok = await vscode.window.showWarningMessage(`You are about to run a background SQL job against ${conn.name} (PROD).`, { modal: true, detail: 'Queries are read-only, but background jobs consume production resources. This confirmation appears once per session.' }, 'Run');
+      if (ok !== 'Run') {
+        return;
+      }
+      this.prodConfirmed.add(conn.id);
+    }
+    let effective: string;
+    try {
+      effective = prepareStatement(text).sql;
+    } catch (e) {
+      const rec = this.results.beginRun({ title: `[BG] ${oneLine(text, 34)}`, sql: text, executedSql: text, connectionId: conn.id, connectionName: conn.name, environment: conn.environment }, false);
+      await this.results.reveal();
+      this.finishWithError(rec, conn, text, e, Date.now());
+      return;
+    }
+    const withBinds = await this.askBinds(effective).catch((e) => {
+      void vscode.window.showErrorMessage(errorMessage(e));
+      return undefined;
+    });
+    if (withBinds === undefined) {
+      return;
+    }
+    const rec = this.results.beginRun({
+      title: `[BG] ${oneLine(text, 34)}`,
+      sql: text,
+      executedSql: withBinds,
+      connectionId: conn.id,
+      connectionName: conn.name,
+      environment: conn.environment
+    });
+    await this.results.reveal();
+    this.setRunning(rec.id, true);
+    const started = Date.now();
+    try {
+      const client = await this.manager.clientFor(conn);
+      const runBg = (progress: vscode.Progress<{ message?: string }>) =>
+        client.runSqlBackground(withBinds, {
+          signal: rec.controller?.signal,
+          pollMs: settings.backgroundPollMs,
+          maxWaitMs: settings.backgroundMaxWaitMs,
+          onProgress: (status) => progress.report({ message: status })
+        });
+      const res = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Background SQL (${conn.name})`, cancellable: true },
+        async (progress, token) => {
+          token.onCancellationRequested(() => rec.controller?.abort());
+          try {
+            return await runBg(progress);
+          } catch (e) {
+            if (e instanceof FusionError && e.kind === 'runtime-missing') {
+              if (await this.ensureRuntime(conn, client, rec.controller?.signal)) {
+                return runBg(progress);
+              }
+            }
+            throw e;
+          }
+        }
+      );
+      this.results.setRows(rec, res.columns, res.rows, false, res.elapsedMs, false, `Background job #${res.jobId} completed (${res.rows.length.toLocaleString()} rows).`);
+      this.history.add({ sql: text, timestamp: started, durationMs: Date.now() - started, status: 'success', connectionId: conn.id, connectionName: conn.name, rowCount: res.rows.length });
+      if (client.reportPath && client.reportPath !== conn.reportPath) {
+        void this.store.patch(conn.id, { reportPath: client.reportPath });
+      }
+    } catch (e) {
+      this.finishWithError(rec, conn, text, e, started);
+    } finally {
+      this.setRunning(rec.id, false);
+    }
+  }
+
   /** Run the statement under the cursor (or the selection) on several connections at once, one result tab per connection. */
   async runOnConnections(args?: RunArgs): Promise<void> {
     const editor = this.editorFor(args);

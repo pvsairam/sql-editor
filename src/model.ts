@@ -3,6 +3,15 @@ import type { OAuthFlow } from './auth/oauth';
 
 export type EnvironmentType = 'DEV' | 'TEST' | 'UAT' | 'PROD' | 'OTHER';
 
+/** Per-connection Oracle Fusion domain metadata injected into @fusion AI prompts. */
+export interface FusionContext {
+  coaSegments?: string;
+  ledger?: string;
+  businessUnit?: string;
+  calendar?: string;
+  notes?: string;
+}
+
 /** Non-secret connection profile (kept in globalState). Secrets live in SecretStorage. */
 export interface Connection {
   id: string;
@@ -15,7 +24,7 @@ export interface Connection {
   environment: EnvironmentType;
   /** BI Publisher data source: ApplicationDB_FSCM (default), ApplicationDB_HCM, ApplicationDB_CRM ... */
   dataSource?: string;
-  /** Catalog folder to hold the helper report; default /~<username>. */
+  /** Catalog folder to hold the helper report; default /~<username> (or /Custom for a shared team folder). */
   catalogRoot?: string;
   allowInsecureTls?: boolean;
   oauth?: {
@@ -34,7 +43,19 @@ export interface Connection {
   helperPath?: string;
   /** Where the helper report was last found/installed. */
   reportPath?: string;
+  /** Optional pod-specific Fusion context (COA segments, Ledger, BU, Calendar) for @fusion AI. */
+  fusionContext?: FusionContext;
   createdAt: number;
+}
+
+export interface SavedQuery {
+  id: string;
+  name: string;
+  folder?: string;
+  description?: string;
+  sql: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface HistoryEntry {

@@ -8,7 +8,7 @@ interface VsCodeApi {
   setState(s: unknown): void;
 }
 declare function acquireVsCodeApi(): VsCodeApi;
-const vscode: VsCodeApi = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : { postMessage() {}, getState: () => undefined, setState() {} };
+const vscode: VsCodeApi = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : { postMessage() { }, getState: () => undefined, setState() { } };
 
 interface RunView {
   dto: RunDTO;
@@ -35,7 +35,8 @@ const ICONS: Record<string, string> = {
   check: '<path d="M5 12l5 5 9-10"/>',
   cal: '<path d="M5 6h14v14H5zM5 10h14M9 4v4M15 4v4"/>',
   fit: '<path d="M4 12h16M4 12l3-3m-3 3l3 3M20 12l-3-3m3 3l-3 3M4 5v14M20 5v14"/>',
-  pin: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"/>'
+  pin: '<path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7"/>',
+  diff: '<path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/>'
 };
 function icon(name: string): SVGSVGElement {
   const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -456,18 +457,21 @@ function renderToolbar(): void {
     right.append(
       button('Copy', 'copy', 'Copy the selection (Ctrl+C) or choose a format', (e) => copyMenu(rv, e.currentTarget as HTMLElement), 'secondary'),
       button('Export', 'export', 'Export to a file', (e) => exportMenu(rv, e.currentTarget as HTMLElement), 'secondary'),
+      ...([...runs.values()].filter((r) => r.dto.status === 'done' && r.dto.columns.length > 0).length >= 2
+        ? [button('Compare', 'diff', 'Compare two result tabs (Added / Removed / Changed rows)', () => send({ type: 'compare' }), 'secondary')]
+        : []),
       ...(rv.grid?.hasDateColumns()
         ? [
-            button('', 'cal', datesFormatted ? 'Dates are formatted - click to show the raw database text' : 'Dates are raw (as returned by the database) - click to format them', () => {
-              datesFormatted = !datesFormatted;
-              persist();
-              for (const r of runs.values()) {
-                r.grid?.setOptions({ dateFormat: dateMode() });
-                r.grid?.refit();
-              }
-              refresh();
-            }, datesFormatted ? 'icon on' : 'icon')
-          ]
+          button('', 'cal', datesFormatted ? 'Dates are formatted - click to show the raw database text' : 'Dates are raw (as returned by the database) - click to format them', () => {
+            datesFormatted = !datesFormatted;
+            persist();
+            for (const r of runs.values()) {
+              r.grid?.setOptions({ dateFormat: dateMode() });
+              r.grid?.refit();
+            }
+            refresh();
+          }, datesFormatted ? 'icon on' : 'icon')
+        ]
         : []),
       button('', 'fit', 'Fit all columns to their content (double-click a column border to fit one)', () => rv.grid?.fitAll(), 'icon'),
       button('', 'record', 'Record view: all columns of the selected row', () => {

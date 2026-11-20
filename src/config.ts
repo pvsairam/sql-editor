@@ -64,5 +64,26 @@ export const settings = {
   },
   get redirectHost(): string {
     return cfg().get<string>('oauth.redirectHost', 'localhost');
+  },
+  get backgroundPollMs(): number {
+    return Math.max(1, cfg().get<number>('background.pollIntervalSeconds', 3)) * 1000;
+  },
+  get backgroundMaxWaitMs(): number {
+    return Math.max(30, cfg().get<number>('background.maxWaitSeconds', 1800)) * 1000;
+  },
+  get schemaMaxObjects(): number {
+    return Math.max(2000, cfg().get<number>('schema.maxObjects', 100000));
+  },
+  get aiProvider(): 'auto' | 'openai' | 'ollama' {
+    return cfg().get<'auto' | 'openai' | 'ollama'>('ai.provider', 'auto');
+  },
+  get aiEndpoint(): string {
+    return cfg().get<string>('ai.endpoint', '').trim();
+  },
+  get aiModel(): string {
+    return cfg().get<string>('ai.model', '').trim();
+  },
+  get aiMaxRepairAttempts(): number {
+    return Math.max(1, Math.min(5, cfg().get<number>('ai.maxRepairAttempts', 3)));
   }
 };

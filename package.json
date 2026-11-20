@@ -1,8 +1,8 @@
 {
   "name": "fusion-sql-dev",
   "displayName": "Fusion SQL DEV",
-  "description": "Oracle Fusion Cloud SQL worksheet for VS Code: run SQL against your Fusion pod through BI Publisher, with browser-session SSO, a fast result grid, schema browser, history and Copilot help.",
-  "version": "2.5.3",
+  "description": "Oracle Fusion Cloud SQL worksheet for VS Code: run SQL synchronously or in background through BI Publisher, with browser-session SSO (Oracle Authenticator/IDCS/OAuth), a fast result grid with diff, persistent schema browser, saved queries, history and AI Copilot.",
+  "version": "2.6.3",
   "publisher": "fusion-dev",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -77,6 +77,11 @@
           "when": "fusionSqlDev.hasActiveConnection"
         },
         {
+          "id": "fusionSqlDev.savedQueries",
+          "name": "Saved Queries",
+          "contextualTitle": "Fusion SQL Saved Queries"
+        },
+        {
           "id": "fusionSqlDev.history",
           "name": "History",
           "contextualTitle": "Fusion SQL History"
@@ -97,6 +102,10 @@
         "contents": "Connect to an Oracle Fusion Cloud pod to run SQL straight from VS Code.\n[$(add) Add Connection](command:fusionSqlDev.addConnection)\n[$(new-file) New SQL Worksheet](command:fusionSqlDev.newWorksheet)\nNeed to sign in with SSO? Choose **Single Sign-On (OAuth)** when adding the connection. [Read the SSO guide](https://github.com/pvsairam/sql-editor/blob/main/docs/SSO.md)."
       },
       {
+        "view": "fusionSqlDev.savedQueries",
+        "contents": "Save reusable Oracle Fusion queries here.\n[$(bookmark) Save Current Query](command:fusionSqlDev.saveQuery)"
+      },
+      {
         "view": "fusionSqlDev.history",
         "contents": "Queries you run appear here."
       }
@@ -107,6 +116,12 @@
         "title": "Run Statement",
         "category": "Fusion SQL",
         "icon": "$(play)"
+      },
+      {
+        "command": "fusionSqlDev.runStatementBackground",
+        "title": "Run Statement in Background (Scheduled Job)",
+        "category": "Fusion SQL",
+        "icon": "$(clock)"
       },
       {
         "command": "fusionSqlDev.runScript",
@@ -332,6 +347,90 @@
         "icon": "$(gear)"
       },
       {
+        "command": "fusionSqlDev.viewPackageSource",
+        "title": "View Package Source (ALL_SOURCE)",
+        "category": "Fusion SQL",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "fusionSqlDev.inspectSynonym",
+        "title": "Inspect Synonym Target",
+        "category": "Fusion SQL",
+        "icon": "$(references)"
+      },
+      {
+        "command": "fusionSqlDev.validateAndRepairSql",
+        "title": "Validate & Auto-Repair SQL (AI)",
+        "category": "Fusion SQL",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "fusionSqlDev.editFusionContext",
+        "title": "Configure Fusion Context (COA / Ledger / BU)…",
+        "category": "Fusion SQL",
+        "icon": "$(organization)"
+      },
+      {
+        "command": "fusionSqlDev.manageAiRules",
+        "title": "Manage AI SQL Rules…",
+        "category": "Fusion SQL",
+        "icon": "$(law)"
+      },
+      {
+        "command": "fusionSqlDev.setAiApiKey",
+        "title": "Set AI API Key (OpenAI / Azure)…",
+        "category": "Fusion SQL",
+        "icon": "$(key)"
+      },
+      {
+        "command": "fusionSqlDev.compareResults",
+        "title": "Compare / Diff Two Result Tabs…",
+        "category": "Fusion SQL",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "fusionSqlDev.saveQuery",
+        "title": "Save Query…",
+        "category": "Fusion SQL",
+        "icon": "$(bookmark)"
+      },
+      {
+        "command": "fusionSqlDev.openSavedQuery",
+        "title": "Open Saved Query",
+        "category": "Fusion SQL",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "fusionSqlDev.runSavedQuery",
+        "title": "Run Saved Query",
+        "category": "Fusion SQL",
+        "icon": "$(play)"
+      },
+      {
+        "command": "fusionSqlDev.renameSavedQuery",
+        "title": "Rename Saved Query…",
+        "category": "Fusion SQL",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "fusionSqlDev.deleteSavedQuery",
+        "title": "Delete Saved Query",
+        "category": "Fusion SQL",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "fusionSqlDev.exportConnections",
+        "title": "Export Connections (Secret-Free JSON)…",
+        "category": "Fusion SQL",
+        "icon": "$(export)"
+      },
+      {
+        "command": "fusionSqlDev.importConnections",
+        "title": "Import Connections (JSON)…",
+        "category": "Fusion SQL",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "fusionDevAssistant.start",
         "title": "Start Workspace",
         "category": "Fusion SQL"
@@ -341,6 +440,18 @@
       "commandPalette": [
         {
           "command": "fusionSqlDev.runStatement",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "fusionSqlDev.runStatementBackground",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "fusionSqlDev.validateAndRepairSql",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "fusionSqlDev.saveQuery",
           "when": "editorLangId == sql"
         },
         {
@@ -422,6 +533,22 @@
         {
           "command": "fusionSqlDev.runSqlText",
           "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.openSavedQuery",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.runSavedQuery",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.renameSavedQuery",
+          "when": "false"
+        },
+        {
+          "command": "fusionSqlDev.deleteSavedQuery",
+          "when": "false"
         }
       ],
       "editor/title": [
@@ -453,19 +580,34 @@
           "group": "9_fusionsql@1"
         },
         {
-          "command": "fusionSqlDev.runScript",
+          "command": "fusionSqlDev.runStatementBackground",
           "when": "editorLangId == sql",
           "group": "9_fusionsql@2"
+        },
+        {
+          "command": "fusionSqlDev.runScript",
+          "when": "editorLangId == sql",
+          "group": "9_fusionsql@3"
         },
         {
           "command": "fusionSqlDev.runOnConnections",
           "when": "editorLangId == sql",
-          "group": "9_fusionsql@2"
+          "group": "9_fusionsql@4"
+        },
+        {
+          "command": "fusionSqlDev.validateAndRepairSql",
+          "when": "editorLangId == sql",
+          "group": "9_fusionsql@5"
+        },
+        {
+          "command": "fusionSqlDev.saveQuery",
+          "when": "editorLangId == sql",
+          "group": "9_fusionsql@6"
         },
         {
           "command": "fusionSqlDev.formatSql",
           "when": "editorLangId == sql",
-          "group": "9_fusionsql@3"
+          "group": "9_fusionsql@7"
         }
       ],
       "view/title": [
@@ -483,6 +625,21 @@
           "command": "fusionSqlDev.refreshConnections",
           "when": "view == fusionSqlDev.connections",
           "group": "navigation@3"
+        },
+        {
+          "command": "fusionSqlDev.exportConnections",
+          "when": "view == fusionSqlDev.connections",
+          "group": "1_io@1"
+        },
+        {
+          "command": "fusionSqlDev.importConnections",
+          "when": "view == fusionSqlDev.connections",
+          "group": "1_io@2"
+        },
+        {
+          "command": "fusionSqlDev.saveQuery",
+          "when": "view == fusionSqlDev.savedQueries",
+          "group": "navigation@1"
         },
         {
           "command": "fusionSqlDev.searchObjects",
@@ -572,44 +729,94 @@
           "group": "3_edit@1"
         },
         {
-          "command": "fusionSqlDev.duplicateConnection",
+          "command": "fusionSqlDev.editFusionContext",
           "when": "view == fusionSqlDev.connections && viewItem =~ /^connection/",
           "group": "3_edit@2"
         },
         {
-          "command": "fusionSqlDev.deleteConnection",
+          "command": "fusionSqlDev.duplicateConnection",
           "when": "view == fusionSqlDev.connections && viewItem =~ /^connection/",
           "group": "3_edit@3"
         },
         {
+          "command": "fusionSqlDev.deleteConnection",
+          "when": "view == fusionSqlDev.connections && viewItem =~ /^connection/",
+          "group": "3_edit@4"
+        },
+        {
           "command": "fusionSqlDev.openTable",
-          "when": "view == fusionSqlDev.schema && viewItem == dbObject",
+          "when": "view == fusionSqlDev.schema && viewItem =~ /^dbObject\\.(TABLE|VIEW|SYNONYM)$/",
           "group": "inline@1"
         },
         {
           "command": "fusionSqlDev.selectFromObject",
-          "when": "view == fusionSqlDev.schema && viewItem == dbObject",
+          "when": "view == fusionSqlDev.schema && viewItem =~ /^dbObject\\.(TABLE|VIEW|SYNONYM)$/",
           "group": "inline@2"
         },
         {
-          "command": "fusionSqlDev.openTable",
-          "when": "view == fusionSqlDev.schema && viewItem == dbObject",
+          "command": "fusionSqlDev.viewPackageSource",
+          "when": "view == fusionSqlDev.schema && viewItem == dbObject.PACKAGE",
+          "group": "inline@1"
+        },
+        {
+          "command": "fusionSqlDev.inspectSynonym",
+          "when": "view == fusionSqlDev.schema && viewItem == dbObject.SYNONYM",
           "group": "1_query@0"
         },
         {
+          "command": "fusionSqlDev.openTable",
+          "when": "view == fusionSqlDev.schema && viewItem =~ /^dbObject\\.(TABLE|VIEW|SYNONYM)$/",
+          "group": "1_query@1"
+        },
+        {
           "command": "fusionSqlDev.selectFromObject",
-          "when": "view == fusionSqlDev.schema && viewItem == dbObject",
+          "when": "view == fusionSqlDev.schema && viewItem =~ /^dbObject\\.(TABLE|VIEW|SYNONYM)$/",
+          "group": "1_query@2"
+        },
+        {
+          "command": "fusionSqlDev.viewPackageSource",
+          "when": "view == fusionSqlDev.schema && viewItem == dbObject.PACKAGE",
           "group": "1_query@1"
         },
         {
           "command": "fusionSqlDev.insertObjectName",
           "when": "view == fusionSqlDev.schema && viewItem =~ /^db(Object|Column)/",
-          "group": "1_query@2"
+          "group": "1_query@3"
         },
         {
           "command": "fusionSqlDev.copyObjectName",
           "when": "view == fusionSqlDev.schema && viewItem =~ /^db(Object|Column)/",
-          "group": "1_query@3"
+          "group": "1_query@4"
+        },
+        {
+          "command": "fusionSqlDev.runSavedQuery",
+          "when": "view == fusionSqlDev.savedQueries && viewItem == savedQuery",
+          "group": "inline@1"
+        },
+        {
+          "command": "fusionSqlDev.openSavedQuery",
+          "when": "view == fusionSqlDev.savedQueries && viewItem == savedQuery",
+          "group": "inline@2"
+        },
+        {
+          "command": "fusionSqlDev.openSavedQuery",
+          "when": "view == fusionSqlDev.savedQueries && viewItem == savedQuery",
+          "group": "1_use@1"
+        },
+        {
+          "command": "fusionSqlDev.runSavedQuery",
+          "when": "view == fusionSqlDev.savedQueries && viewItem == savedQuery",
+          "group": "1_use@2"
+        },
+        {
+          "command": "fusionSqlDev.renameSavedQuery",
+          "when": "view == fusionSqlDev.savedQueries && viewItem == savedQuery",
+          "group": "2_manage@1"
+        },
+        {
+          "command": "fusionSqlDev.deleteSavedQuery",
+          "when": "view == fusionSqlDev.savedQueries && viewItem == savedQuery",
+          "group": "2_manage@2"
         },
         {
           "command": "fusionSqlDev.runHistoryItem",
@@ -830,6 +1037,54 @@
           ],
           "markdownDescription": "Host name used in the sign-in redirect URL. The listener itself only binds to the loopback interface."
         },
+        "fusionSqlDev.background.pollIntervalSeconds": {
+          "type": "integer",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 60,
+          "description": "How often to poll BI Publisher ScheduleReportWSSService when running a statement in the background."
+        },
+        "fusionSqlDev.background.maxWaitSeconds": {
+          "type": "integer",
+          "default": 1800,
+          "minimum": 30,
+          "maximum": 14400,
+          "description": "Maximum time to wait for a scheduled background SQL job to finish (default 30 minutes)."
+        },
+        "fusionSqlDev.schema.maxObjects": {
+          "type": "integer",
+          "default": 100000,
+          "minimum": 2000,
+          "maximum": 250000,
+          "description": "Maximum number of Tables, Views, Synonyms and Packages to sync into the local persistent schema cache."
+        },
+        "fusionSqlDev.ai.provider": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "openai",
+            "ollama"
+          ],
+          "default": "auto",
+          "markdownDescription": "AI backend for `@fusion` and Validate & Auto-Repair. `auto` uses VS Code Language Models (Copilot or any installed chat LM) and falls back to BYOK if configured; `openai` calls an OpenAI / Azure OpenAI / compatible endpoint; `ollama` calls local Ollama."
+        },
+        "fusionSqlDev.ai.endpoint": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Custom chat completions URL for BYOK AI (e.g. `https://api.openai.com/v1/chat/completions`, Azure OpenAI deployment URL, or `http://localhost:11434/api/chat`)."
+        },
+        "fusionSqlDev.ai.model": {
+          "type": "string",
+          "default": "",
+          "description": "Model name for BYOK AI (e.g. gpt-4o-mini, gpt-4.1, llama3.1)."
+        },
+        "fusionSqlDev.ai.maxRepairAttempts": {
+          "type": "integer",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Maximum live validation & auto-repair iterations when fixing Oracle ORA-* errors."
+        },
         "fusionSqlDev.debugLogging": {
           "type": "boolean",
           "default": false,
@@ -864,6 +1119,10 @@
           {
             "name": "tables",
             "description": "Suggest Fusion tables for a business topic"
+          },
+          {
+            "name": "validate",
+            "description": "Validate SQL read-only against the active pod and auto-repair ORA-* errors"
           }
         ]
       }

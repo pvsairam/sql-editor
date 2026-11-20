@@ -1,5 +1,56 @@
 # Changelog
 
+## 2.6.3
+
+- **Fixed Schema view re-downloading & slow loading**:
+  - Clicking or switching connections no longer wipes the local disk schema cache (only the explicit **Refresh Schema** button or changing `fusionSqlDev.schema.owner` forces a full re-sync), making connection switching and VS Code startup instant.
+  - Initial schema sync now fetches up to 100,000 objects in a single round-trip instead of 14 repeated `ALL_OBJECTS` sorts, cutting first-time sync time dramatically and eliminating the lingering progress bar after objects load.
+
+## 2.6.2
+
+- **Fixed "Invalid username or password" on Browser SSO Validate Setup & SOAP v2 endpoints**:
+  - SOAP 1.1 `v2/CatalogService` and `v2/ReportService` now send **Cookie-only first** for Browser SSO sessions (omitting `Authorization: Bearer <jwt>`, which WebLogic/BIP v2 rejects as `"Invalid username or password"` when SOAP body credentials are empty), and fall back to Bearer+Cookie only if Cookie-only is rejected.
+  - SOAP 1.2 WSS (`ExternalReportWSSService` / `ScheduleReportWSSService`) tries Bearer+Cookie first and automatically falls back to Cookie-only if needed.
+  - `test()` / **Validate Setup** now lets WSS/REST discovery verify SSO/Bearer sessions even if legacy SOAP 1.1 `v2/CatalogService` rejects the token, and clears a rejected validation browser session so clicking **Validate Setup** again opens a fresh sign-in.
+  - Fixed misleading `"Invalid username or password"` wording when using non-Basic (Browser SSO / OAuth / Token) authentication.
+
+## 2.6.1
+
+- **Full BI Catalog ACLs & Ownership in `FusionSqlDevHelper.catalog`**: Every folder, report, data model, and child file in the generated `.catalog` now embeds explicit Oracle BI Catalog ACLs (`BIAdministrator`: Full Control `65535`, `BIAuthor`: Full Control `65535`, `BIConsumer`: Read+Run `3`, plus the logged-in user: Full Control `65535`), `OwnerId`, `CreatorId`, `LastModifierId`, `CatalogArchiveOptions: 2`, and `online="true"` / `cacheDocument="false"` / `bip:propertyMap="3"` — matching Oracle Fusion's native BI Catalog export format.
+- **Automated My Folders upload over SSO (`ExternalReportWSSService` + `saw.dll`)**:
+  - Catalog operations (`objectExist`, `createFolder`, `uploadObject`, `deleteObject`, `getFolderContents`) now automatically fall back to **SOAP 1.2 `ExternalReportWSSService`** when legacy SOAP 1.1 `v2/CatalogService` rejects SSO/JWT sessions.
+  - Automatic `saw.dll?unArchiveCatalog` fallback into My Folders (`/users/<user>`) now triggers on SSO/permission errors as well as `SECURITY_VIOLATION`, follows same-origin redirects to establish `SAW` session cookies + real `_scid`, uses cookie-only auth (never sending conflicting `Authorization: Bearer` to `saw.dll`), and passes `repl=all` + `acl=preserve` to repair broken installs cleanly.
+  - Browser SSO now primes `/analytics/saw.dll?Catalog` right after capturing the Fusion JWT so Presentation Services cookies are ready immediately.
+  - Handled Oracle `PublicReportService::generateReport`'s misleading `"does not have permission to run the report"` error when the helper report doesn't exist yet — automatically verifies existence and triggers My Folders installation.
+
+## 2.6.0
+
+### Pillar 1 — Bulletproof SSO, Transport & Shared Helper Install
+- **Browser SSO with Fusion JWT capture (`tokenrelay`)**: After signing in through Chrome/Edge/Brave (including Oracle IDCS + Oracle Authenticator MFA, Entra ID, or Okta), the extension captures both the pod session cookies AND a Fusion JWT Bearer token from `/fscmRestApi/anticsrf` + `/fscmRestApi/tokenrelay`, stored securely in VS Code SecretStorage.
+- **Fixed premature browser close on transient errors**: Browser SSO verification now only succeeds on genuine authenticated BI Publisher responses (never closing early on transient network/500/redirect errors during MFA).
+- **Added `ExternalReportWSSService` (SOAP 1.2) transport fallback**: For Bearer JWT and browser-session SSO connections, the client now tries `v2/ReportService` → `ExternalReportWSSService` (SOAP 1.2) → `rest/v1/reports` and remembers what works.
+- **Real Presentation Services `_scid` token**: Catalog Unarchive (`/analytics/saw.dll?unArchiveCatalog`) now fetches the real anti-CSRF `_scid` and session cookies from `/analytics/saw.dll?Catalog` before uploading.
+- **Shared `/Custom/FusionSqlDev/v2/` helper support**: Save Helper Catalog File now offers Personal (`/~user`) or Shared team folder (`/Custom`), and runtime discovery automatically finds a shared `/Custom/FusionSqlDev/v2/csv.xdo` deployment.
+
+### Pillar 2 — Background SQL (`ScheduleReportWSSService`)
+- New command **Run Statement in Background (Scheduled Job)** executes long-running queries asynchronously through BI Publisher's `ScheduleReportWSSService` (`scheduleReport` → `getAllJobInstanceIDs` → `getReportHistoryInfo` → `getDocumentData`), bypassing the ~500s synchronous gateway timeout with live progress notifications and cancellation (`cancelSchedule`).
+
+### Pillar 3 — Full Persistent Schema Browser
+- **Tables, Views, Synonyms & Packages**: Syncs the full schema (not capped at 2,000 objects) in chunks and persists a per-connection local cache for instant startup and sub-millisecond in-memory search/filtering.
+- **Grouped Schema Tree**: Organizes objects into `Tables`, `Views`, `Synonyms`, and `Packages` with collision-free node IDs (`owner.type.name`).
+- **Package Source & Synonym Inspector**: New commands **View Package Source (`ALL_SOURCE`)** and **Inspect Synonym Target (`ALL_SYNONYMS`)**, plus automatic synonym resolution for column expansion and IntelliSense.
+
+### Pillar 4 — Upgraded `@fusion` AI Copilot
+- **BYOK & Any VS Code LM**: Works with GitHub Copilot, any other VS Code Language Model provider, or Bring-Your-Own-Key OpenAI / Azure OpenAI / local Ollama (`fusionSqlDev.ai.provider`, API key in SecretStorage).
+- **Per-Connection Fusion Context & Remembered Rules**: Configure Chart of Accounts segments (`SEGMENT1..N`), Ledger, Business Unit, Calendar, and custom SQL rules injected into every `@fusion` prompt.
+- **Static Fusion SQL Safety Warnings**: Automatically flags unrestricted scans on high-volume tables (`GL_BALANCES`, `XLA_AE_LINES`, `XLA_AE_HEADERS`, `INV_MATERIAL_TXNS`, etc.), missing effective-date filters on `_F`/`_M` tables, and missing `LANGUAGE` filters on `_TL` tables.
+- **Read-Only Validate & Auto-Repair**: New `@fusion /validate` command and **Validate & Auto-Repair SQL (AI)** action tests `SELECT`/`WITH` queries safely (`ROWNUM <= 25` / `FETCH FIRST 25 ROWS ONLY`, neutralizing `:binds`), and feeds `ORA-*` errors + live `ALL_TAB_COLUMNS` back to the LLM to self-heal queries.
+
+### Pillar 5 — UX Polish
+- **1-Click Result Diff (`Compare / Diff Two Result Tabs…`)**: Compare any two result tabs (e.g. `[DEV]` vs `[PROD]` after Multi-Connection Run) with a toolbar **Compare** button; opens a pinned diff grid showing `ADDED (+)`, `REMOVED (-)`, and `CHANGED (~)` (`old → new`) rows ready for filtering and Excel/CSV export.
+- **Saved Queries Sidebar**: New **Saved Queries** view in the Fusion SQL Activity Bar with folder grouping, inline Run/Open, rename, and delete.
+- **Secret-Free Connection Export / Import**: Share connection profiles as clean JSON without passwords, tokens, cookies, or OAuth client secrets.
+
 ## 2.5.3
 
 - Helper install now falls back automatically to the Catalog page's own Unarchive call (`/analytics/saw.dll?unArchiveCatalog`) when BI Publisher's SOAP CatalogService refuses to create the report ("Security violation"). Endpoint and form fields taken from a real browser capture; it needs an auth the Presentation Services accept (Basic or a browser session).

@@ -268,6 +268,25 @@ export class ResultsView implements vscode.WebviewViewProvider, vscode.Disposabl
     this.post({ type: 'focus-run', runId });
   }
 
+  /** Open a precomputed static result tab (e.g. a Compare/Diff result), pinned so it stays open. */
+  addStaticResult(init: { title: string; sql: string; connectionName: string; environment: string; columns: string[]; rows: string[][]; note?: string }): RunRecord {
+    const rec = this.beginRun(
+      {
+        title: init.title,
+        sql: init.sql,
+        executedSql: init.sql,
+        connectionId: '',
+        connectionName: init.connectionName,
+        environment: init.environment
+      },
+      true
+    );
+    rec.pinned = true;
+    this.setRows(rec, init.columns, init.rows, false, 0, false, init.note, false);
+    this.focusRun(rec.id);
+    return rec;
+  }
+
   dispose(): void {
     for (const d of this.disposables) {
       d.dispose();

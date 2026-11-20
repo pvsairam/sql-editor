@@ -27,7 +27,7 @@ type ToForm =
   | { type: 'busy'; busy: boolean };
 
 declare function acquireVsCodeApi(): { postMessage(m: unknown): void };
-const vscode = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : { postMessage() {} };
+const vscode = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : { postMessage() { } };
 const app = document.getElementById('app')!;
 
 let form: FormData;
@@ -130,7 +130,7 @@ function render(): void {
     if (form.browserKind === 'custom') {
       box.append(field('Browser executable', text('browserPath', 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe')));
     }
-    box.append(el('div', 'hint', 'On first use a browser window opens on your pod. Sign in as usual (MFA included); the window closes by itself and the session is kept in VS Code secure storage. The browser uses its own private profile, so your normal browsing is untouched.'));
+    box.append(el('div', 'hint', 'On first use a browser window opens on your pod. Sign in as usual (Oracle Authenticator / IDCS / Entra / Okta MFA included); the window closes automatically and captures both your session cookie and Fusion JWT bearer token in VS Code secure storage.'));
     card.append(box);
   } else if (form.auth === 'oauth') {
     const box = el('div', 'section');
@@ -155,7 +155,7 @@ function render(): void {
   adv.append(el('summary', undefined, 'Advanced options'));
   adv.append(
     field('BI Publisher data source', text('dataSource', 'ApplicationDB_FSCM (default) - or ApplicationDB_HCM, ApplicationDB_CRM'), {}),
-    field('Catalog folder for the helper report', text('catalogRoot', 'empty = your personal folder (/~user)'), {}),
+    field('Catalog folder for the helper report', text('catalogRoot', 'empty = personal folder (/~user), or /Custom for a shared team folder'), {}),
     field('Existing helper report (full catalog path, optional)', text('helperPath', 'e.g. /~user/FusionQuery/v1/csv.xdo - used first if set'), {})
   );
   const tls = el('label', 'check');

@@ -82,10 +82,10 @@ export class FusionCompletionProvider implements vscode.CompletionItemProvider {
       return undefined;
     }
 
-    const afterFrom = /\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+[A-Za-z0-9_$#]*$/i.test(line);
+    const afterFrom = /\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+([A-Za-z0-9_$#]*)$/i.exec(line);
     const items: vscode.CompletionItem[] = [];
     if (afterFrom) {
-      items.push(...this.tableItems(conn?.id));
+      items.push(...this.tableItems(conn?.id, '0', afterFrom[1]));
     } else {
       // columns of the tables already named in the statement
       if (conn) {
@@ -99,7 +99,7 @@ export class FusionCompletionProvider implements vscode.CompletionItemProvider {
         }
         // opportunistically warm the column cache for tables in the statement
         for (const table of new Set(tablesInStatement(scopeText).values())) {
-          if (!this.schema.cachedColumns(conn.id, table) && (FUSION_TABLE_MAP.has(table) || this.schema.cached(conn.id)?.some((o) => o.name === table))) {
+          if (!this.schema.cachedColumns(conn.id, table) && (FUSION_TABLE_MAP.has(table) || this.schema.cachedAll(conn.id)?.some((o) => o.name === table))) {
             void this.schema.columns(conn, table);
           }
         }
@@ -122,24 +122,45 @@ export class FusionCompletionProvider implements vscode.CompletionItemProvider {
         it.sortText = '3' + name;
         items.push(it);
       }
-      items.push(...this.tableItems(conn?.id, '5'));
+      const wordPrefix = /([A-Za-z0-9_$#]*)$/.exec(line)?.[1] ?? '';
+      items.push(...this.tableItems(conn?.id, '5', wordPrefix));
     }
     return items;
   }
 
-  private tableItems(connId: string | undefined, sortPrefix = '0'): vscode.CompletionItem[] {
+  private tableItems(connId: string | undefined, sortPrefix = '0', typedPrefix = ''): vscode.CompletionItem[] {
     const seen = new Set<string>();
     const items: vscode.CompletionItem[] = [];
-    for (const o of (connId ? this.schema.cached(connId) : undefined) ?? []) {
+    const upperPrefix = typedPrefix.toUpperCase();
+    const cachedAll = connId ? this.schema.cachedAll(connId) : undefined;
+    // Cap returned completion items to keep VS Code IntelliSense snappy even with 66k cached Fusion objects.
+    const MAX_ITEMS = 2500;
+    for (const o of cachedAll ?? []) {
+      if (o.type === 'PACKAGE') {
+        continue;
+      }
+      if (upperPrefix && !o.name.toUpperCase().includes(upperPrefix)) {
+        continue;
+      }
+      if (seen.has(o.name)) {
+        continue;
+      }
       seen.add(o.name);
-      const it = new vscode.CompletionItem(o.name.toLowerCase(), o.type === 'VIEW' ? vscode.CompletionItemKind.Interface : vscode.CompletionItemKind.Struct);
+      const kind = o.type === 'VIEW' ? vscode.CompletionItemKind.Interface : vscode.CompletionItemKind.Struct;
+      const it = new vscode.CompletionItem(o.name.toLowerCase(), kind);
       it.detail = `${o.owner}.${o.name} (${o.type.toLowerCase()})`;
       it.sortText = sortPrefix + o.name;
       it.filterText = o.name;
       items.push(it);
+      if (items.length >= MAX_ITEMS) {
+        break;
+      }
     }
     for (const t of FUSION_TABLES) {
       if (seen.has(t.name)) {
+        continue;
+      }
+      if (upperPrefix && !t.name.toUpperCase().includes(upperPrefix)) {
         continue;
       }
       const it = new vscode.CompletionItem(t.name.toLowerCase(), vscode.CompletionItemKind.Struct);

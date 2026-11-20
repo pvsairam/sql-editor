@@ -18,6 +18,8 @@ export interface MockOptions {
   token?: string;
   /** For bearer mode: reject SOAP so the client must fall back to REST. */
   soapRejectsBearer?: boolean;
+  /** For bearer mode: accept ExternalReportWSSService (SOAP 1.2) even when v2 SOAP rejects bearer. */
+  wssAcceptsBearer?: boolean;
   /** Wording used for "report missing" faults. */
   missingReportFault?: 'recognizable' | 'opaque';
   /** Pretend the helper is already imported at this path (old manual-import flow). */
@@ -45,6 +47,10 @@ export class MockFusion {
   objects = new Map<string, UploadedObject>();
   raw: Buffer = Buffer.alloc(0);
   unarchives: string[] = [];
+  unarchiveScids: string[] = [];
+  cancelledJobs: string[] = [];
+  private bgJobs = new Map<string, { sql: string; reportPath: string; polls: number }>();
+  private nextJobId = 1000;
   folders = new Set<string>();
   requests: { path: string; op: string; auth?: string; bodyCreds: boolean; status: number }[] = [];
   failedLogins = 0;
@@ -57,6 +63,7 @@ export class MockFusion {
       pass: 's3cret',
       token: 'good-token',
       soapRejectsBearer: false,
+      wssAcceptsBearer: false,
       missingReportFault: 'recognizable',
       preinstalled: [],
       readOnlyCatalog: false,
@@ -111,6 +118,10 @@ export class MockFusion {
   /** Presentation Services Unarchive: parse the multipart upload and the native .catalog stream. */
   private unarchive(res: http.ServerResponse, text: string): void {
     const folder = /name="Folder"\r\n\r\n([^\r]*)/.exec(text)?.[1] ?? '';
+    const scid = /name="_scid"\r\n\r\n([^\r]*)/.exec(text)?.[1] ?? '';
+    if (scid) {
+      this.unarchiveScids.push(scid);
+    }
     if (this.o.denyUnarchive) {
       res.writeHead(200, { 'Content-Type': 'text/html' }).end('<html><body>Error: not authorized to unarchive</body></html>');
       return;
@@ -158,11 +169,21 @@ export class MockFusion {
   private handle(req: http.IncomingMessage, res: http.ServerResponse, body: string): void {
     const path = req.url ?? '';
     const authz = req.headers['authorization'];
-    const op = /<v2:(\w+)>/.exec(body)?.[1] ?? (path.includes('/rest/') ? 'rest-run' : 'unknown');
+    const isWss = path.includes('/services/ExternalReportWSSService');
+    const isSchedule = path.includes('/services/ScheduleReportWSSService');
+    const rawOp =
+      /<(?:v2|pub|sch):(\w+)>/.exec(body)?.[1] ??
+      (path.includes('/rest/') ? 'rest-run' : path.includes('saw.dll?Catalog') ? 'saw-catalog' : 'unknown');
+    const op = isWss && rawOp === 'runReport' ? 'wss-runReport' : rawOp;
     const bodyUser = /<v2:userID>([^<]*)<\/v2:userID>/.exec(body)?.[1] ?? '';
     const bodyPass = /<v2:password>([^<]*)<\/v2:password>/.exec(body)?.[1] ?? '';
     const log = (status: number) => this.requests.push({ path, op, auth: authz, bodyCreds: !!bodyUser, status });
 
+    if (path.includes('saw.dll?Catalog')) {
+      log(200);
+      res.writeHead(200, { 'Content-Type': 'text/html', 'Set-Cookie': 'SAW_SESSION=mock_saw_123; Path=/' }).end('<html><script>var _scid="REAL_SCID_987654321";</script></html>');
+      return;
+    }
     if (path.includes('saw.dll?unArchiveCatalog')) {
       this.unarchive(res, body);
       return;
@@ -192,7 +213,8 @@ export class MockFusion {
         break;
       case 'bearer': {
         const ok = authz === `Bearer ${this.o.token}`;
-        if (!ok || (!isRest && this.o.soapRejectsBearer)) {
+        const allowedWss = isWss && this.o.wssAcceptsBearer;
+        if (!ok || (!isRest && !allowedWss && this.o.soapRejectsBearer)) {
           log(401);
           res.writeHead(401, { 'Content-Type': 'text/html' }).end('<html><body>Unauthorized</body></html>');
           return;
@@ -224,6 +246,124 @@ export class MockFusion {
         log(200);
         res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ reportBytes: out.toString('base64') }));
         return;
+      }
+      if (isWss) {
+        if (op === 'wss-runReport') {
+          const reportPath = /<pub:reportAbsolutePath>([^<]*)<\/pub:reportAbsolutePath>/.exec(body)![1];
+          const enc = /<pub:name>P_B64_CONTENT<\/pub:name>[\s\S]*?<pub:item>([^<]*)<\/pub:item>/.exec(body)![1];
+          const out = this.runReport(reportPath, enc);
+          if (typeof out === 'string') {
+            log(500);
+            this.fault(res, out);
+            return;
+          }
+          log(200);
+          this.send(
+            res,
+            200,
+            `<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope"><env:Body><ns2:runReportResponse xmlns:ns2="http://xmlns.oracle.com/oxp/service/PublicReportService"><ns2:runReportReturn><ns2:reportBytes>${out.toString('base64')}</ns2:reportBytes><ns2:reportContentType>text/csv</ns2:reportContentType></ns2:runReportReturn></ns2:runReportResponse></env:Body></env:Envelope>`
+          );
+          return;
+        }
+        if (op === 'objectExist') {
+          const p = /<pub:reportObjectAbsolutePath>([^<]*)</.exec(body)![1];
+          log(200);
+          this.send(res, 200, `<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope"><env:Body><ns2:objectExistResponse><ns2:objectExistReturn>${this.objects.has(p)}</ns2:objectExistReturn></ns2:objectExistResponse></env:Body></env:Envelope>`);
+          return;
+        }
+        if (op === 'createFolder') {
+          const f = /<pub:folderAbsolutePath>([^<]*)</.exec(body)![1];
+          this.folders.add(f);
+          log(200);
+          this.send(res, 200, '<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope"><env:Body><createFolderResponse/></env:Body></env:Envelope>');
+          return;
+        }
+        if (op === 'uploadObject') {
+          const p = /<pub:reportObjectAbsolutePathURL>([^<]*)</.exec(body)![1];
+          const type = /<pub:objectType>([^<]*)</.exec(body)![1];
+          const data = Buffer.from(/<pub:objectZippedData>([^<]*)</.exec(body)![1], 'base64');
+          const files: Record<string, string> = {};
+          for (const e of readZip(data)) {
+            files[e.name] = e.data.toString('utf8');
+          }
+          this.objects.set(p, { type, zip: data, files });
+          log(200);
+          this.send(res, 200, `<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope"><env:Body><uploadObjectResponse><uploadObjectReturn>${p}</uploadObjectReturn></uploadObjectResponse></env:Body></env:Envelope>`);
+          return;
+        }
+        if (op === 'getFolderContents') {
+          const f = /<pub:folderAbsolutePath>([^<]*)</.exec(body)![1];
+          const names = [...this.objects.keys()].filter((k) => k.slice(0, k.lastIndexOf('/')) === f).map((k) => k.slice(k.lastIndexOf('/') + 1));
+          const items = names.map((n) => `<ns2:item><ns2:displayName>${n}</ns2:displayName><ns2:fileName>${n}</ns2:fileName></ns2:item>`).join('');
+          log(200);
+          this.send(res, 200, `<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope"><env:Body><ns2:getFolderContentsResponse><ns2:getFolderContentsReturn><ns2:catalogContents>${items}</ns2:catalogContents></ns2:getFolderContentsReturn></ns2:getFolderContentsResponse></env:Body></env:Envelope>`);
+          return;
+        }
+      }
+      if (isSchedule) {
+        if (op === 'scheduleReport') {
+          const reportPath = /<sch:reportAbsolutePath>([^<]*)<\/sch:reportAbsolutePath>/.exec(body)![1];
+          const enc = /<sch:name>P_B64_CONTENT<\/sch:name>[\s\S]*?<sch:item>([^<]*)<\/sch:item>/.exec(body)![1];
+          const id = String(++this.nextJobId);
+          this.bgJobs.set(id, { reportPath, sql: enc, polls: 0 });
+          log(200);
+          this.send(res, 200, `<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope"><env:Body><ns2:scheduleReportResponse><ns2:scheduleReportReturn>${id}</ns2:scheduleReportReturn></ns2:scheduleReportResponse></env:Body></env:Envelope>`);
+          return;
+        }
+        if (op === 'getAllJobInstanceIDs') {
+          const sub = /<sch:submittedJobId>([^<]*)<\/sch:submittedJobId>/.exec(body)![1];
+          log(200);
+          this.send(res, 200, `<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope"><env:Body><ns2:getAllJobInstanceIDsResponse><ns2:getAllJobInstanceIDsReturn><ns2:item>${sub}</ns2:item></ns2:getAllJobInstanceIDsReturn></ns2:getAllJobInstanceIDsResponse></env:Body></env:Envelope>`);
+          return;
+        }
+        if (op === 'getReportHistoryInfo') {
+          const id = /<sch:jobInstanceID>([^<]*)<\/sch:jobInstanceID>/.exec(body)![1];
+          const job = this.bgJobs.get(id);
+          if (!job) {
+            log(500);
+            this.fault(res, `Job ${id} not found`);
+            return;
+          }
+          job.polls++;
+          const st = job.polls < 2 ? 'Running' : 'Success';
+          log(200);
+          this.send(
+            res,
+            200,
+            `<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope"><env:Body><ns2:getReportHistoryInfoResponse><ns2:getReportHistoryInfoReturn><ns2:status>${st}</ns2:status><ns2:jobOutputID>OUT_${id}</ns2:jobOutputID></ns2:getReportHistoryInfoReturn></ns2:getReportHistoryInfoResponse></env:Body></env:Envelope>`
+          );
+          return;
+        }
+        if (op === 'getDocumentData') {
+          const outId = /<sch:jobOutputID>([^<]*)<\/sch:jobOutputID>/.exec(body)![1];
+          const id = outId.replace(/^OUT_/, '');
+          const job = this.bgJobs.get(id);
+          if (!job) {
+            log(500);
+            this.fault(res, `Output ${outId} not found`);
+            return;
+          }
+          const out = this.runReport(job.reportPath, job.sql);
+          if (typeof out === 'string') {
+            log(500);
+            this.fault(res, out);
+            return;
+          }
+          log(200);
+          this.send(
+            res,
+            200,
+            `<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope"><env:Body><ns2:getDocumentDataResponse><ns2:getDocumentDataReturn>${out.toString('base64')}</ns2:getDocumentDataReturn></ns2:getDocumentDataResponse></env:Body></env:Envelope>`
+          );
+          return;
+        }
+        if (op === 'cancelSchedule') {
+          const id = /<sch:jobInstanceID>([^<]*)<\/sch:jobInstanceID>/.exec(body)![1];
+          this.cancelledJobs.push(id);
+          log(200);
+          this.send(res, 200, `<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope"><env:Body><ns2:cancelScheduleResponse/></env:Body></env:Envelope>`);
+          return;
+        }
       }
       switch (op) {
         case 'runReport': {
@@ -386,6 +526,48 @@ export class MockFusion {
     }
     if (/FROM NO_ROWS\b/i.test(q)) {
       return csv(['ID', 'NAME'], []);
+    }
+    if (/FROM all_objects\b/i.test(q)) {
+      const objs = [
+        ['FUSION', 'DEMO_T', 'TABLE'],
+        ['FUSION', 'DEMO_V', 'VIEW'],
+        ['FUSION', 'DEMO_T', 'SYNONYM'],
+        ['FUSION', 'DEMO_SYN', 'SYNONYM'],
+        ['FUSION', 'DEMO_PKG', 'PACKAGE']
+      ];
+      return csv(['OWNER', 'OBJECT_NAME', 'OBJECT_TYPE'], objs.slice(offset, offset + limit));
+    }
+    if (/FROM all_synonyms\b/i.test(q)) {
+      if (/DEMO_SYN/i.test(q)) {
+        return csv(['OWNER', 'SYNONYM_NAME', 'TABLE_OWNER', 'TABLE_NAME', 'DB_LINK'], [['FUSION', 'DEMO_SYN', 'FUSION', 'DEMO_T', '']]);
+      }
+      return csv(['OWNER', 'SYNONYM_NAME', 'TABLE_OWNER', 'TABLE_NAME', 'DB_LINK'], []);
+    }
+    if (/FROM all_source\b/i.test(q)) {
+      return csv(
+        ['TYPE', 'LINE', 'TEXT'],
+        [
+          ['PACKAGE', '1', 'PACKAGE demo_pkg AS'],
+          ['PACKAGE', '2', '  PROCEDURE run_check;'],
+          ['PACKAGE', '3', 'END demo_pkg;'],
+          ['PACKAGE BODY', '1', 'PACKAGE BODY demo_pkg AS'],
+          ['PACKAGE BODY', '2', '  PROCEDURE run_check IS BEGIN NULL; END;'],
+          ['PACKAGE BODY', '3', 'END demo_pkg;']
+        ]
+      );
+    }
+    if (/FROM all_tab_columns\b/i.test(q)) {
+      if (/TABLE_NAME\s*=\s*'DEMO_T'/i.test(q)) {
+        return csv(
+          ['COLUMN_NAME', 'DATA_TYPE', 'DATA_LENGTH', 'DATA_PRECISION', 'DATA_SCALE', 'NULLABLE', 'COLUMN_ID'],
+          [
+            ['ID', 'NUMBER', '22', '18', '0', 'N', '1'],
+            ['NAME', 'VARCHAR2', '240', '', '', 'Y', '2'],
+            ['NOTE', 'VARCHAR2', '4000', '', '', 'Y', '3']
+          ]
+        );
+      }
+      return csv(['COLUMN_NAME', 'DATA_TYPE', 'DATA_LENGTH', 'DATA_PRECISION', 'DATA_SCALE', 'NULLABLE', 'COLUMN_ID'], []);
     }
     const t = /FROM\s+(\w+)/i.exec(q)?.[1] ?? 'X';
     return `ORA-00942: table or view does not exist\nORA-06512: at line 4\n(${t})`;

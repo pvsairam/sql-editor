@@ -14,13 +14,19 @@ import { QueryService } from './query/QueryService';
 import { FusionCodeLensProvider } from './sql/codelens';
 import { FusionCompletionProvider, FusionHoverProvider } from './sql/completion';
 import { formatSql } from './sql/format';
-import { splitStatements } from './sql/lexer';
-import { registerChatParticipant } from './ai/chatParticipant';
+import { splitStatements, statementAt } from './sql/lexer';
+import { KEY_AI_RULES, getAiRules, registerChatParticipant } from './ai/chatParticipant';
+import { AI_API_KEY_SECRET } from './ai/llmClient';
+import { validateAndRepairSql } from './ai/repair';
+import { diffTables, guessKeyColumns } from './results/diff';
+import { SavedQueriesStore } from './saved/SavedQueriesStore';
+import { SavedQueriesTree, SavedQueryNode } from './saved/savedQueriesTree';
+import { parseImportedConnections, serializeConnectionsForExport } from './connections/exportImport';
 import { StatusBarController } from './statusBar';
-import { Connection, HistoryEntry } from './model';
+import { Connection, FusionContext, HistoryEntry, SavedQuery } from './model';
 import { errorMessage, FusionError } from './fusion/errors';
 import { settings } from './config';
-import { buildCatalogArchive, buildCatalogFile, buildRuntime } from './fusion/runtime';
+import { SHARED_CATALOG_ROOT, buildCatalogArchive, buildCatalogFile, buildRuntime } from './fusion/runtime';
 
 const DOCS = 'https://github.com/pvsairam/sql-editor/blob/main/docs';
 
@@ -29,12 +35,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const store = new ConnectionStore(ctx, log);
   const manager = new ConnectionManager(store, log, ctx.globalStorageUri.fsPath);
   const history = new HistoryStore(ctx, log);
-  const schema = new SchemaService(manager, log);
+  const savedQueries = new SavedQueriesStore(ctx);
+  const schema = new SchemaService(manager, log, ctx.globalStorageUri.fsPath);
   const results = new ResultsView(ctx);
   const query = new QueryService(ctx, store, manager, history, results, log);
   registerResultsHandlers(results, query, history, log);
 
-  ctx.subscriptions.push(log, store, manager, history, results, query);
+  ctx.subscriptions.push(log, store, manager, history, savedQueries, results, query);
 
   // ------------------------------------------------------------------ one-time migration
   void store.migrateLegacy().then((n) => {
@@ -48,14 +55,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // ----------------------------------------------------------------------------- views
   const connectionTree = new ConnectionTree(store, manager);
   const historyTree = new HistoryTree(history);
+  const savedQueriesTree = new SavedQueriesTree(savedQueries);
   const schemaTree = new SchemaTree(store, schema);
   ctx.subscriptions.push(
     connectionTree,
     historyTree,
+    savedQueriesTree,
     schemaTree,
     vscode.window.createTreeView('fusionSqlDev.connections', { treeDataProvider: connectionTree, showCollapseAll: false }),
-    vscode.window.createTreeView('fusionSqlDev.history', { treeDataProvider: historyTree }),
     vscode.window.createTreeView('fusionSqlDev.schema', { treeDataProvider: schemaTree }),
+    vscode.window.createTreeView('fusionSqlDev.savedQueries', { treeDataProvider: savedQueriesTree }),
+    vscode.window.createTreeView('fusionSqlDev.history', { treeDataProvider: historyTree }),
     vscode.window.registerWebviewViewProvider(ResultsView.viewId, results, { webviewOptions: { retainContextWhenHidden: true } }),
     new StatusBarController(store, query)
   );
@@ -74,7 +84,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     vscode.languages.registerDocumentRangeFormattingEditProvider(sqlSelector, {
       provideDocumentRangeFormattingEdits: (doc, range) => [vscode.TextEdit.replace(range, formatScript(doc.getText(range)).trimEnd())]
     }),
-    registerChatParticipant(ctx, store, schema, results, log)
+    registerChatParticipant(ctx, store, manager, schema, results, log)
   );
 
   const syncChip = () => {
@@ -156,6 +166,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   // ------------------------------------------------------------------------ run commands
   reg('fusionSqlDev.runStatement', (args?: { uri?: vscode.Uri; offset?: number }) => query.runStatement(args));
+  reg('fusionSqlDev.runStatementBackground', (args?: { uri?: vscode.Uri; offset?: number }) => query.runStatementBackground(args));
   reg('fusionSqlDev.runOnConnections', (args?: { uri?: vscode.Uri; offset?: number }) => query.runOnConnections(args));
   reg('fusionSqlDev.runScript', (args?: { uri?: vscode.Uri }) => query.runScript(args));
   reg('fusionSqlDev.cancelQuery', () => query.cancel());
@@ -248,7 +259,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       return;
     }
     await store.setActive(c.id);
-    schema.refresh(c.id);
     void vscode.window.setStatusBarMessage(`Active connection: ${c.name}`, 3000);
   });
 
@@ -263,7 +273,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       await query.bindDocToConnection(sqlEditor.document.uri, id);
     }
     await store.setActive(id);
-    schema.refresh(id);
   });
   reg('fusionSqlDev.switchConnection', async (arg?: { uri?: vscode.Uri }) => {
     const all = store.list();
@@ -291,7 +300,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       await query.bindDocToConnection(uri, picked.id);
     }
     await store.setActive(picked.id);
-    schema.refresh(picked.id);
   });
 
   reg('fusionSqlDev.testConnection', async (arg?: unknown) => {
@@ -399,7 +407,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     if (!c) {
       return;
     }
-    const spec = { catalogRoot: c.catalogRoot ?? `/~${c.username}`, dataSource: c.dataSource || 'ApplicationDB_FSCM' };
+    let catalogRoot = c.catalogRoot ?? `/~${c.username}`;
+    if (!c.catalogRoot) {
+      const targetPick = await vscode.window.showQuickPick(
+        [
+          { label: `Personal folder (/~${c.username})`, description: 'Only for your user (Catalog → My Folders → Unarchive)', root: `/~${c.username}` },
+          { label: `Shared team folder (${SHARED_CATALOG_ROOT})`, description: 'Deploy once for your whole team (Catalog → Shared Folders → Custom → Unarchive)', root: SHARED_CATALOG_ROOT }
+        ],
+        { title: 'Where will this helper catalog be uploaded?', ignoreFocusOut: true }
+      );
+      if (targetPick) {
+        catalogRoot = targetPick.root;
+      }
+    }
+    const spec = { catalogRoot, dataSource: c.dataSource || 'ApplicationDB_FSCM' };
     const folder = await vscode.window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, defaultUri: vscode.Uri.file(require('path').join(require('os').homedir(), 'Downloads')), openLabel: 'Save helper files here', title: 'Choose a folder for the helper files' });
     if (!folder) {
       return;
@@ -411,7 +432,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     await vscode.workspace.fs.writeFile(out('FusionSqlDevHelper.catalog'), buildCatalogFile(spec, c.username));
     await vscode.workspace.fs.writeFile(out('FusionSqlDevHelper.xdrz'), buildCatalogArchive(spec));
     const dir = `${spec.catalogRoot}/FusionSqlDev/v2`;
-    const pick = await vscode.window.showInformationMessage(`Saved FusionSqlDevHelper.catalog (use Catalog → My Folders → Unarchive) plus dm.xdmz / csv.xdoz as a fallback (Upload into ${dir}). Then use Test Connection.`, 'Reveal Files', 'Test Connection');
+    const where = catalogRoot.startsWith(SHARED_CATALOG_ROOT) ? 'Catalog → Shared Folders → Custom → Unarchive' : 'Catalog → My Folders → Unarchive';
+    const pick = await vscode.window.showInformationMessage(`Saved FusionSqlDevHelper.catalog (use ${where}) plus dm.xdmz / csv.xdoz as a fallback (Upload into ${dir}). Then use Test Connection.`, 'Reveal Files', 'Test Connection');
     if (pick === 'Reveal Files') {
       await vscode.commands.executeCommand('revealFileInOS', out('csv.xdoz'));
     } else if (pick === 'Test Connection') {
@@ -420,6 +442,66 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   });
   reg('fusionSqlDev.refreshConnections', () => connectionTree.refresh());
 
+  reg('fusionSqlDev.exportConnections', async () => {
+    const all = store.list();
+    if (all.length === 0) {
+      void vscode.window.showInformationMessage('No connections to export.');
+      return;
+    }
+    const target = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(require('path').join(require('os').homedir(), 'fusion-sql-connections.json')),
+      filters: { JSON: ['json'] },
+      title: 'Export Connections (Secret-Free JSON)'
+    });
+    if (!target) {
+      return;
+    }
+    const json = serializeConnectionsForExport(all);
+    await vscode.workspace.fs.writeFile(target, Buffer.from(json, 'utf8'));
+    void vscode.window.showInformationMessage(`Exported ${all.length} connection${all.length === 1 ? '' : 's'} without secrets.`);
+  });
+
+  reg('fusionSqlDev.importConnections', async () => {
+    const files = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      filters: { JSON: ['json'] },
+      title: 'Import Connections (JSON)'
+    });
+    if (!files?.[0]) {
+      return;
+    }
+    try {
+      const raw = Buffer.from(await vscode.workspace.fs.readFile(files[0])).toString('utf8');
+      const { connections: incoming, skipped } = parseImportedConnections(raw);
+      if (incoming.length === 0) {
+        void vscode.window.showWarningMessage('No valid connections found in that file.');
+        return;
+      }
+      const existing = store.list();
+      const byName = new Map(existing.map((c) => [c.name.toLowerCase(), c]));
+      let added = 0;
+      let updated = 0;
+      for (const c of incoming) {
+        const match = byName.get(c.name.toLowerCase());
+        if (match) {
+          await store.save({ ...match, ...c, id: match.id, reportPath: match.reportPath, runtimeConsent: match.runtimeConsent });
+          updated++;
+        } else {
+          await store.save(c);
+          added++;
+        }
+      }
+      if (!store.activeId && incoming[0]) {
+        await store.setActive(incoming[0].id);
+      }
+      void vscode.window.showInformationMessage(
+        `Imported ${added} new and updated ${updated} connection(s)${skipped ? ` (${skipped} invalid skipped)` : ''}. Passwords and SSO sessions are not stored in export files — sign in or edit credentials when ready.`
+      );
+    } catch (e) {
+      handleError('Import connections failed', e);
+    }
+  });
+
   // ------------------------------------------------------------------------ schema commands
   reg('fusionSqlDev.refreshSchema', () => schema.refresh(store.activeId));
   reg('fusionSqlDev.searchObjects', async () => {
@@ -427,7 +509,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     if (!c) {
       return;
     }
-    const v = await vscode.window.showInputBox({ title: 'Search tables & views', prompt: 'Part of a name, e.g. PER_ALL or %ASSIGN%. Leave empty to list everything (first 2,000).', value: schema.filterFor(c.id), ignoreFocusOut: true });
+    const v = await vscode.window.showInputBox({ title: 'Search tables, views, synonyms & packages', prompt: 'Part of a name, e.g. PER_ALL or %ASSIGN%. Filters the full cached schema instantly. Leave empty to clear.', value: schema.filterFor(c.id), ignoreFocusOut: true });
     if (v !== undefined) {
       await schema.setFilter(c, v);
     }
@@ -441,6 +523,51 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   reg('fusionSqlDev.openTable', async (node: ObjectNode) => {
     if (node?.obj) {
       await query.openTable(node.obj.owner, node.obj.name);
+    }
+  });
+  reg('fusionSqlDev.viewPackageSource', async (node?: ObjectNode) => {
+    const c = store.active;
+    if (!c) {
+      return;
+    }
+    const name = node?.obj?.name ?? (await vscode.window.showInputBox({ title: 'View Package Source', prompt: 'Enter Oracle package name (from ALL_SOURCE)', ignoreFocusOut: true }));
+    if (!name?.trim()) {
+      return;
+    }
+    try {
+      const src = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Loading package source ${name.toUpperCase()}…` },
+        () => schema.packageSource(c, name.trim(), node?.obj?.owner)
+      );
+      await openSqlDocument(src, c.id);
+    } catch (e) {
+      handleError(`Could not load package ${name}`, e);
+    }
+  });
+  reg('fusionSqlDev.inspectSynonym', async (node?: ObjectNode) => {
+    const c = store.active;
+    if (!c) {
+      return;
+    }
+    const name = node?.obj?.name ?? (await vscode.window.showInputBox({ title: 'Inspect Synonym Target', prompt: 'Enter Oracle synonym name (from ALL_SYNONYMS)', ignoreFocusOut: true }));
+    if (!name?.trim()) {
+      return;
+    }
+    try {
+      const target = await schema.synonymTarget(c, name.trim(), node?.obj?.owner);
+      if (!target) {
+        void vscode.window.showInformationMessage(`No target found in ALL_SYNONYMS for ${name.toUpperCase()}.`);
+        return;
+      }
+      const qualified = `${target.tableOwner}.${target.tableName}${target.dbLink ? `@${target.dbLink}` : ''}`;
+      const pick = await vscode.window.showInformationMessage(`${target.synonymOwner}.${target.synonymName} → ${qualified}`, 'Open Target Table', 'Copy Target');
+      if (pick === 'Open Target Table') {
+        await query.openTable(target.tableOwner, target.tableName);
+      } else if (pick === 'Copy Target') {
+        await vscode.env.clipboard.writeText(qualified.toLowerCase());
+      }
+    } catch (e) {
+      handleError(`Could not inspect synonym ${name}`, e);
     }
   });
   reg('fusionSqlDev.selectFromObject', async (node: ObjectNode) => {
@@ -513,6 +640,285 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const ok = await vscode.window.showWarningMessage('Clear query history?', { modal: true, detail: 'Starred queries are kept.' }, 'Clear');
     if (ok === 'Clear') {
       history.clear(true);
+    }
+  });
+
+  // ------------------------------------------------------------------ saved queries commands
+  const savedOf = (arg: unknown): SavedQuery | undefined => (arg instanceof SavedQueryNode ? arg.query : typeof arg === 'string' ? savedQueries.get(arg) : undefined);
+
+  reg('fusionSqlDev.saveQuery', async (sqlArg?: string) => {
+    let sql = typeof sqlArg === 'string' ? sqlArg.trim() : '';
+    if (!sql) {
+      const editor = vscode.window.activeTextEditor?.document.languageId === 'sql' ? vscode.window.activeTextEditor : vscode.window.visibleTextEditors.find((e) => e.document.languageId === 'sql');
+      if (editor) {
+        sql = !editor.selection.isEmpty
+          ? editor.document.getText(editor.selection).trim()
+          : (statementAt(editor.document.getText(), editor.document.offsetAt(editor.selection.active))?.text ?? editor.document.getText()).trim();
+      }
+    }
+    if (!sql) {
+      void vscode.window.showInformationMessage('Open a SQL worksheet with a query to save.');
+      return;
+    }
+    const name = await vscode.window.showInputBox({ title: 'Save Query', prompt: 'Query name (e.g. Active Employees by BU)', ignoreFocusOut: true });
+    if (!name?.trim()) {
+      return;
+    }
+    const folder = await vscode.window.showInputBox({ title: 'Folder (optional)', prompt: 'Group under a folder name (e.g. HCM, GL, AP) or leave empty', ignoreFocusOut: true });
+    await savedQueries.add({ name: name.trim(), folder: folder?.trim() || undefined, sql });
+    void vscode.window.setStatusBarMessage(`Saved query "${name.trim()}"`, 3000);
+  });
+
+  reg('fusionSqlDev.openSavedQuery', async (arg?: unknown) => {
+    const q = savedOf(arg);
+    if (q) {
+      await openSqlDocument(q.sql.trimEnd() + ';\n');
+    }
+  });
+
+  reg('fusionSqlDev.runSavedQuery', async (arg?: unknown) => {
+    const q = savedOf(arg);
+    if (q) {
+      await query.runSqlText(q.sql);
+    }
+  });
+
+  reg('fusionSqlDev.renameSavedQuery', async (arg?: unknown) => {
+    const q = savedOf(arg);
+    if (!q) {
+      return;
+    }
+    const name = await vscode.window.showInputBox({ title: 'Rename Saved Query', value: q.name, ignoreFocusOut: true });
+    if (name?.trim()) {
+      await savedQueries.update(q.id, { name: name.trim() });
+    }
+  });
+
+  reg('fusionSqlDev.deleteSavedQuery', async (arg?: unknown) => {
+    const q = savedOf(arg);
+    if (!q) {
+      return;
+    }
+    const ok = await vscode.window.showWarningMessage(`Delete saved query "${q.name}"?`, { modal: true }, 'Delete');
+    if (ok === 'Delete') {
+      await savedQueries.delete(q.id);
+    }
+  });
+
+  // ------------------------------------------------------------------- compare / diff results
+  reg('fusionSqlDev.compareResults', async () => {
+    const done = results.all().filter((r) => r.status === 'done' && r.columns.length > 0);
+    if (done.length < 2) {
+      void vscode.window.showInformationMessage('Run at least two queries (or use "Run Statement on Multiple Connections") to compare results.');
+      return;
+    }
+    let left = done[done.length - 2];
+    let right = done[done.length - 1];
+    if (done.length > 2) {
+      const pickLeft = await vscode.window.showQuickPick(
+        done.map((r) => ({ label: r.title, description: `${r.connectionName} · ${r.rows.length} rows`, id: r.id })),
+        { title: 'Compare Results (1/2): Select baseline (Left)', ignoreFocusOut: true }
+      );
+      if (!pickLeft) {
+        return;
+      }
+      const remaining = done.filter((r) => r.id !== pickLeft.id);
+      const pickRight = await vscode.window.showQuickPick(
+        remaining.map((r) => ({ label: r.title, description: `${r.connectionName} · ${r.rows.length} rows`, id: r.id })),
+        { title: 'Compare Results (2/2): Select target (Right)', ignoreFocusOut: true }
+      );
+      if (!pickRight) {
+        return;
+      }
+      left = done.find((r) => r.id === pickLeft.id)!;
+      right = done.find((r) => r.id === pickRight.id)!;
+    }
+    const guessed = guessKeyColumns(left.columns, right.columns);
+    const diff = diffTables(
+      { columns: left.columns, rows: left.rows },
+      { columns: right.columns, rows: right.rows },
+      { leftLabel: left.title, rightLabel: right.title, keyColumns: guessed }
+    );
+    results.addStaticResult({
+      title: `[DIFF] ${left.connectionName} vs ${right.connectionName}`,
+      sql: `-- ${diff.summary}\n${left.sql}`,
+      connectionName: `${left.connectionName} ↔ ${right.connectionName}`,
+      environment: 'OTHER',
+      columns: diff.columns,
+      rows: diff.rows,
+      note: diff.summary
+    });
+    await results.reveal();
+  });
+
+  // ----------------------------------------------------------------------- AI & context commands
+  reg('fusionSqlDev.validateAndRepairSql', async (sqlArg?: string) => {
+    const conn = query.currentConnection() ?? store.active;
+    if (!conn) {
+      void vscode.window.showInformationMessage('Select an active Fusion connection first.');
+      return;
+    }
+    const editor = vscode.window.activeTextEditor?.document.languageId === 'sql' ? vscode.window.activeTextEditor : vscode.window.visibleTextEditors.find((e) => e.document.languageId === 'sql');
+    let sql = typeof sqlArg === 'string' ? sqlArg.trim() : '';
+    if (!sql && editor) {
+      sql = !editor.selection.isEmpty
+        ? editor.document.getText(editor.selection).trim()
+        : (statementAt(editor.document.getText(), editor.document.offsetAt(editor.selection.active))?.text ?? '').trim();
+    }
+    if (!sql) {
+      void vscode.window.showInformationMessage('Put the cursor inside a SELECT statement to validate.');
+      return;
+    }
+    try {
+      const res = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Validating SQL on ${conn.name}…`, cancellable: true },
+        async (progress, token) => {
+          const ac = new AbortController();
+          token.onCancellationRequested(() => ac.abort());
+          return validateAndRepairSql({
+            ctx,
+            conn,
+            sql,
+            manager,
+            schema,
+            log,
+            signal: ac.signal,
+            onStatus: (m) => progress.report({ message: m })
+          });
+        }
+      );
+      if (res.ok) {
+        const warnText = res.warnings.length ? ` (${res.warnings.length} safety note${res.warnings.length === 1 ? '' : 's'})` : '';
+        if (res.repaired) {
+          const pick = await vscode.window.showInformationMessage(
+            `Auto-repaired and validated on ${conn.name} in ${res.attempts.length} attempts (${res.sampleRowCount ?? 0} sample rows)${warnText}.`,
+            'Open Repaired SQL',
+            'Run Now'
+          );
+          if (pick === 'Open Repaired SQL') {
+            await openSqlDocument(res.sql + ';\n', conn.id);
+          } else if (pick === 'Run Now') {
+            await query.runSqlText(res.sql);
+          }
+        } else {
+          void vscode.window.showInformationMessage(`SQL validated cleanly on ${conn.name} (${res.sampleRowCount ?? 0} sample rows)${warnText}.`);
+        }
+      } else {
+        void vscode.window.showWarningMessage(`Validation failed after ${res.attempts.length} attempt(s): ${res.error ?? 'Unknown error'}`);
+      }
+    } catch (e) {
+      handleError('Validate & Auto-Repair failed', e);
+    }
+  });
+
+  reg('fusionSqlDev.editFusionContext', async (arg?: unknown) => {
+    const c = await pickConnection(arg, 'Configure Fusion context (COA / Ledger / BU) for which connection?');
+    if (!c) {
+      return;
+    }
+    const prev: FusionContext = c.fusionContext ?? {};
+    const coaSegments = await vscode.window.showInputBox({
+      title: `${c.name} — Chart of Accounts Segments`,
+      prompt: 'Describe SEGMENT1..N (e.g. SEGMENT1=Company, SEGMENT2=Department, SEGMENT3=Account). Leave empty to omit.',
+      value: prev.coaSegments ?? '',
+      ignoreFocusOut: true
+    });
+    if (coaSegments === undefined) {
+      return;
+    }
+    const ledger = await vscode.window.showInputBox({
+      title: `${c.name} — Default Ledger`,
+      prompt: 'e.g. US Primary Ledger (LEDGER_ID=300000001234)',
+      value: prev.ledger ?? '',
+      ignoreFocusOut: true
+    });
+    if (ledger === undefined) {
+      return;
+    }
+    const businessUnit = await vscode.window.showInputBox({
+      title: `${c.name} — Default Business Unit`,
+      prompt: 'e.g. US1 Business Unit (BU_ID=300000005678)',
+      value: prev.businessUnit ?? '',
+      ignoreFocusOut: true
+    });
+    if (businessUnit === undefined) {
+      return;
+    }
+    const calendar = await vscode.window.showInputBox({
+      title: `${c.name} — Accounting Calendar / Period Format`,
+      prompt: 'e.g. Monthly Calendar (JAN-26, FEB-26)',
+      value: prev.calendar ?? '',
+      ignoreFocusOut: true
+    });
+    if (calendar === undefined) {
+      return;
+    }
+    const notes = await vscode.window.showInputBox({
+      title: `${c.name} — Additional Pod Notes for @fusion AI`,
+      prompt: 'Any custom DFFs, org conventions, or table preferences',
+      value: prev.notes ?? '',
+      ignoreFocusOut: true
+    });
+    if (notes === undefined) {
+      return;
+    }
+    const next: FusionContext = {
+      coaSegments: coaSegments.trim() || undefined,
+      ledger: ledger.trim() || undefined,
+      businessUnit: businessUnit.trim() || undefined,
+      calendar: calendar.trim() || undefined,
+      notes: notes.trim() || undefined
+    };
+    const empty = !next.coaSegments && !next.ledger && !next.businessUnit && !next.calendar && !next.notes;
+    await store.patch(c.id, { fusionContext: empty ? undefined : next });
+    void vscode.window.showInformationMessage(`Updated Fusion AI context for ${c.name}.`);
+  });
+
+  reg('fusionSqlDev.manageAiRules', async () => {
+    const rules = getAiRules(ctx);
+    const pick = await vscode.window.showQuickPick(
+      [
+        { label: '$(add) Add a new SQL rule…', description: 'Injected into every @fusion prompt', idx: -1 },
+        ...rules.map((r, idx) => ({ label: r, description: 'Click to remove', idx }))
+      ],
+      { title: 'Remembered @fusion AI SQL Rules', ignoreFocusOut: true }
+    );
+    if (!pick) {
+      return;
+    }
+    if (pick.idx === -1) {
+      const rule = await vscode.window.showInputBox({
+        title: 'Add AI SQL Rule',
+        prompt: 'e.g. Always filter business unit to US1 BU, or always alias GL_CODE_COMBINATIONS as gcc',
+        ignoreFocusOut: true
+      });
+      if (rule?.trim()) {
+        await ctx.globalState.update(KEY_AI_RULES, [...rules, rule.trim()]);
+        void vscode.window.showInformationMessage('AI SQL rule saved.');
+      }
+    } else {
+      const next = rules.filter((_, i) => i !== pick.idx);
+      await ctx.globalState.update(KEY_AI_RULES, next);
+      void vscode.window.showInformationMessage('AI SQL rule removed.');
+    }
+  });
+
+  reg('fusionSqlDev.setAiApiKey', async () => {
+    const key = await vscode.window.showInputBox({
+      title: 'Set AI API Key (OpenAI / Azure OpenAI / Compatible)',
+      prompt: 'Stored securely in VS Code SecretStorage. Leave empty to clear.',
+      password: true,
+      ignoreFocusOut: true
+    });
+    if (key === undefined) {
+      return;
+    }
+    if (key.trim()) {
+      await ctx.secrets.store(AI_API_KEY_SECRET, key.trim());
+      void vscode.window.showInformationMessage('AI API key saved in VS Code SecretStorage.');
+    } else {
+      await ctx.secrets.delete(AI_API_KEY_SECRET);
+      void vscode.window.showInformationMessage('AI API key cleared.');
     }
   });
 

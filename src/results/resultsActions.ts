@@ -74,6 +74,9 @@ export function registerResultsHandlers(results: ResultsView, query: QueryServic
           case 'close-run':
             results.remove(msg.runId);
             break;
+          case 'compare':
+            await vscode.commands.executeCommand('fusionSqlDev.compareResults');
+            break;
           case 'log':
             log.debug(`[webview] ${msg.text}`);
             break;

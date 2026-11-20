@@ -7,13 +7,22 @@ import { browserCandidates, browserLogin, findBrowser } from '../src/auth/browse
 import { cookieHeaderFor } from '../src/auth/cdp';
 import { FusionError } from '../src/fusion/errors';
 
-// A stand-in "Chrome": serves /json/version, speaks just enough DevTools over WebSocket.
+// A stand-in "Chrome": serves /json/version (and optional /json/list + Runtime.evaluate for tokenrelay),
+// speaks just enough DevTools over WebSocket.
 const FAKE = `#!/usr/bin/env node
 const http = require('http'), crypto = require('crypto');
 const port = Number(process.argv.find((a) => a.startsWith('--remote-debugging-port=')).split('=')[1]);
 let polls = 0;
 const send = (s, o) => { const b = Buffer.from(JSON.stringify(o)); const h = b.length < 126 ? Buffer.from([0x81, b.length]) : Buffer.from([0x81, 126, b.length >> 8, b.length & 255]); s.write(Buffer.concat([h, b])); };
-const srv = http.createServer((q, r) => { if (q.url === '/json/version') r.end(JSON.stringify({ webSocketDebuggerUrl: 'ws://127.0.0.1:' + port + '/devtools/browser/x' })); else r.writeHead(404).end(); });
+const srv = http.createServer((q, r) => {
+  if (q.url === '/json/version') {
+    r.end(JSON.stringify({ webSocketDebuggerUrl: 'ws://127.0.0.1:' + port + '/devtools/browser/x' }));
+  } else if (q.url === '/json/list' && process.env.FAKE_TOKEN_RELAY) {
+    r.end(JSON.stringify([{ type: 'page', url: 'http://127.0.0.1:9/fscmUI/faces/FuseWelcome', webSocketDebuggerUrl: 'ws://127.0.0.1:' + port + '/devtools/page/1' }]));
+  } else {
+    r.writeHead(404).end();
+  }
+});
 srv.on('upgrade', (req, sock) => {
   const accept = crypto.createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
   sock.write('HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: ' + accept + '\\r\\n\\r\\n');
@@ -32,7 +41,12 @@ srv.on('upgrade', (req, sock) => {
         polls++;
         const cookies = polls < 3 ? [{ name: 'other', value: 'x', domain: 'example.com', path: '/' }] : [{ name: 'JSESSIONID', value: 'abc123', domain: '127.0.0.1', path: '/' }, { name: 'ORA_FUSION', value: 'tok', domain: '.127.0.0.1', path: '/' }, { name: 'nope', value: 'n', domain: 'evil.com', path: '/' }];
         send(sock, { id: m.id, result: { cookies } });
-      } else if (m.method === 'Browser.close') { send(sock, { id: m.id, result: {} }); setTimeout(() => process.exit(0), 20); }
+      } else if (m.method === 'Runtime.evaluate') {
+        send(sock, { id: m.id, result: { result: { value: process.env.FAKE_TOKEN_RELAY || '' } } });
+      } else if (m.method === 'Browser.close') {
+        send(sock, { id: m.id, result: {} });
+        setTimeout(() => process.exit(0), 20);
+      }
     }
   });
 });
@@ -41,26 +55,54 @@ if (process.env.FAKE_EXIT_EARLY) setTimeout(() => process.exit(0), 500);
 `;
 
 function fakeBrowser(): string {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fake-chrome-')), 'chrome');
-  fs.writeFileSync(f, FAKE, { mode: 0o755 });
-  return f;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-chrome-'));
+  const script = path.join(dir, 'chrome.js');
+  fs.writeFileSync(script, FAKE, { mode: 0o755 });
+  if (process.platform === 'win32') {
+    const cmd = path.join(dir, 'chrome.cmd');
+    fs.writeFileSync(cmd, `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`, 'utf8');
+    return cmd;
+  }
+  return script;
 }
 
 test('browser SSO: opens the browser, polls cookies until the pod accepts them, returns only pod cookies', async () => {
   const exe = fakeBrowser();
   const verified: string[] = [];
-  const header = await browserLogin({
+  const session = await browserLogin({
     baseUrl: 'http://127.0.0.1:9',
     executable: exe,
     profileDir: fs.mkdtempSync(path.join(os.tmpdir(), 'prof-')),
     pollMs: 50,
-    verify: async (h) => {
-      verified.push(h);
-      return h.includes('JSESSIONID');
+    verify: async (s) => {
+      verified.push(s.cookie);
+      return s.cookie.includes('JSESSIONID');
     }
   });
-  assert.equal(header, 'JSESSIONID=abc123; ORA_FUSION=tok');
+  assert.equal(session.cookie, 'JSESSIONID=abc123; ORA_FUSION=tok');
+  assert.equal(session.bearerToken, undefined);
   assert.equal(verified.length, 1, 'verify is only called when cookies for the pod appear');
+});
+
+test('browser SSO: captures Fusion JWT via /fscmRestApi/tokenrelay when available alongside cookies', async () => {
+  const exe = fakeBrowser();
+  const futureExp = Math.floor(Date.now() / 1000) + 3600;
+  const fakeJwt = `eyJhbGciOiJSUzI1NiJ9.${Buffer.from(JSON.stringify({ exp: futureExp, sub: 'jdoe' })).toString('base64url')}.sig`;
+  process.env['FAKE_TOKEN_RELAY'] = fakeJwt;
+  try {
+    const session = await browserLogin({
+      baseUrl: 'http://127.0.0.1:9',
+      executable: exe,
+      profileDir: fs.mkdtempSync(path.join(os.tmpdir(), 'prof-')),
+      pollMs: 50,
+      verify: async (s) => s.cookie.includes('JSESSIONID') && s.bearerToken === fakeJwt
+    });
+    assert.equal(session.cookie, 'JSESSIONID=abc123; ORA_FUSION=tok');
+    assert.equal(session.bearerToken, fakeJwt);
+    assert.equal(session.tokenExpiresAt, futureExp * 1000);
+  } finally {
+    delete process.env['FAKE_TOKEN_RELAY'];
+  }
 });
 
 test('browser SSO: closing the browser early is reported as cancelled; abort works', async () => {

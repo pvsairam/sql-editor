@@ -2,13 +2,51 @@
  * FusionClient: runs SQL on an Oracle Fusion Cloud pod through the helper BI Publisher report and
  * installs that helper automatically when it is missing (no manual catalog import needed).
  */
-import { classifyResponse, createFolderBody, deleteObjectBody, envelope, getFolderContentsBody, parseFolderFileNames, parseReportBytes, runReportBody, uploadObjectBody, BodyCredentials } from './soap';
+import {
+  BodyCredentials,
+  PUB_WSS_NS,
+  SCH_WSS_NS,
+  cancelScheduleBody,
+  classifyResponse,
+  createFolderBody,
+  createFolderWssBody,
+  deleteObjectBody,
+  deleteObjectWssBody,
+  envelope,
+  getAllJobInstanceIdsBody,
+  getDocumentDataBody,
+  getFolderContentsBody,
+  getFolderContentsWssBody,
+  getReportHistoryInfoBody,
+  objectExistWssBody,
+  parseDocumentData,
+  parseFolderFileNames,
+  parseJobHistoryStatus,
+  parseJobInstanceIds,
+  parseObjectExist,
+  parseReportBytes,
+  parseScheduledJobId,
+  runReportBody,
+  runReportWssBody,
+  scheduleReportBody,
+  soap12Envelope,
+  uploadObjectBody,
+  uploadObjectWssBody
+} from './soap';
 import { FusionError, SSO_HINT } from './errors';
 import { HttpResponse, httpRequest } from './http';
 import { parseDelimited } from './csv';
 import { buildCatalogFile, buildRuntime, DEFAULT_DATA_SOURCE, encodeSql, extractFromArchive, legacyReportPaths, patchReportZip, runtimePaths } from './runtime';
 import { AuthSession, AuthStyle, Logger, nullLogger, QueryPage } from './types';
 import { prepareStatement, wrapForPaging } from '../sql/prepare';
+
+export interface BackgroundRunOptions {
+  signal?: AbortSignal;
+  pollMs?: number;
+  maxWaitMs?: number;
+  jobName?: string;
+  onProgress?: (status: string, jobId?: string) => void;
+}
 
 export interface FusionClientOptions {
   baseUrl: string;
@@ -64,7 +102,8 @@ export class FusionClient {
   private readonly insecure: boolean;
   private readonly log: Logger;
   private style: AuthStyle;
-  private transport: 'soap' | 'rest' = 'soap';
+  private transport: 'soap' | 'wss' | 'rest' = 'soap';
+  private catalogTransport: 'soap' | 'wss' = 'soap';
   reportPath?: string;
 
   constructor(opts: FusionClientOptions) {
@@ -83,15 +122,19 @@ export class FusionClient {
   // transport
   // ---------------------------------------------------------------------------------------------
 
-  private async headers(signal?: AbortSignal): Promise<Record<string, string>> {
+  private async headers(signal?: AbortSignal, mode: 'default' | 'cookie-only' | 'bearer-only' = 'default'): Promise<Record<string, string>> {
     const h: Record<string, string> = { 'Content-Type': 'text/xml; charset=utf-8', Accept: 'text/xml, application/xml, */*' };
-    const authz = this.auth.method === 'basic' && this.style === 'body' ? undefined : await this.auth.authorization(signal);
-    if (authz) {
-      h['Authorization'] = authz;
+    if (mode !== 'cookie-only') {
+      const authz = this.auth.method === 'basic' && this.style === 'body' ? undefined : await this.auth.authorization(signal);
+      if (authz) {
+        h['Authorization'] = authz;
+      }
     }
-    const cookie = this.auth.cookie?.();
-    if (cookie) {
-      h['Cookie'] = cookie;
+    if (mode !== 'bearer-only') {
+      const cookie = this.auth.cookie?.();
+      if (cookie) {
+        h['Cookie'] = cookie;
+      }
     }
     return h;
   }
@@ -103,25 +146,37 @@ export class FusionClient {
     return null;
   }
 
-  /** POST a SOAP request; classify failures. `inner` gets the credentials block to embed. */
+  /** POST a SOAP v2 request; classify failures. `inner` gets the credentials block to embed. */
   private async soap(service: 'ReportService' | 'CatalogService', inner: (c: BodyCredentials | null) => string, timeoutMs: number, signal?: AbortSignal): Promise<HttpResponse> {
     const url = `${this.baseUrl}/xmlpserver/services/v2/${service}`;
-    const attempt = async (): Promise<{ res: HttpResponse; err?: FusionError }> => {
+    const hasCookie = !!this.auth.cookie?.();
+    const attempt = async (mode: 'default' | 'cookie-only' | 'bearer-only' = 'default'): Promise<{ res: HttpResponse; err?: FusionError }> => {
       const started = Date.now();
       const res = await httpRequest({
         url,
         method: 'POST',
-        headers: await this.headers(signal),
+        headers: await this.headers(signal, mode),
         body: envelope(inner(this.bodyCreds())),
         timeoutMs,
         signal,
         allowInsecureTls: this.insecure
       });
-      this.log.debug(`POST ${service} -> HTTP ${res.status} (${Date.now() - started} ms, ${res.body.length} chars)`);
+      this.log.debug(`POST v2/${service} (${mode}) -> HTTP ${res.status} (${Date.now() - started} ms, ${res.body.length} chars)`);
       return { res, err: classifyResponse(res.status, res.headers, res.body, this.auth.method) };
     };
 
-    let { res, err } = await attempt();
+    // On SOAP 1.1 v2 endpoints, a browser SSO session works best with Cookie-only first (sending an
+    // Authorization: Bearer JWT alongside empty <userID>/<password> causes WebLogic/BIP v2 to reject
+    // it as "Invalid username or password"). Fall back to Bearer+Cookie if Cookie-only is rejected.
+    const initialMode: 'default' | 'cookie-only' = this.auth.method === 'browser' && hasCookie ? 'cookie-only' : 'default';
+    let { res, err } = await attempt(initialMode);
+    if (err && (err.kind === 'auth' || err.kind === 'sso') && initialMode === 'cookie-only') {
+      const authz = await this.auth.authorization(signal);
+      if (authz) {
+        this.log.debug(`v2/${service} rejected cookie-only; retrying with Bearer token.`);
+        ({ res, err } = await attempt('default'));
+      }
+    }
     // A redirect / HTML page means the pod never evaluated our credentials (SSO). Retrying with the
     // other basic-auth style is therefore safe (it cannot count as a failed password attempt).
     if (err?.kind === 'sso' && this.auth.method === 'basic' && this.style === 'both') {
@@ -142,13 +197,62 @@ export class FusionClient {
     return res;
   }
 
+  /** POST a SOAP 1.2 WSS request (ExternalReportWSSService / ScheduleReportWSSService / CatalogService). */
+  private async soapWss(service: 'ExternalReportWSSService' | 'ScheduleReportWSSService' | 'CatalogService', bodyXml: string, timeoutMs: number, signal?: AbortSignal): Promise<HttpResponse> {
+    const url = `${this.baseUrl}/xmlpserver/services/${service}`;
+    const sendOnce = async (mode: 'default' | 'cookie-only'): Promise<{ res: HttpResponse; err?: FusionError }> => {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/soap+xml; charset=utf-8',
+        Accept: 'application/soap+xml, text/xml, */*'
+      };
+      if (mode !== 'cookie-only') {
+        const authz = await this.auth.authorization(signal);
+        if (authz) {
+          headers['Authorization'] = authz;
+        }
+      }
+      const cookie = this.auth.cookie?.();
+      if (cookie) {
+        headers['Cookie'] = cookie;
+      }
+      const started = Date.now();
+      const res = await httpRequest({ url, method: 'POST', headers, body: bodyXml, timeoutMs, signal, allowInsecureTls: this.insecure });
+      this.log.debug(`POST ${service} (${mode}) -> HTTP ${res.status} (${Date.now() - started} ms, ${res.body.length} chars)`);
+      return { res, err: classifyResponse(res.status, res.headers, res.body, this.auth.method) };
+    };
+
+    let { res, err } = await sendOnce('default');
+    if (err && (err.kind === 'auth' || err.kind === 'sso') && this.auth.method === 'browser' && this.auth.cookie?.()) {
+      this.log.debug(`${service} rejected Bearer+Cookie; retrying with Cookie only.`);
+      ({ res, err } = await sendOnce('cookie-only'));
+    }
+    if (err) {
+      throw err;
+    }
+    return res;
+  }
+
   // ---------------------------------------------------------------------------------------------
   // report execution
   // ---------------------------------------------------------------------------------------------
 
+  private async runReportWss(reportPath: string, encodedSql: string, signal?: AbortSignal): Promise<Buffer> {
+    const res = await this.soapWss('ExternalReportWSSService', soap12Envelope('pub', PUB_WSS_NS, runReportWssBody(reportPath, encodedSql)), this.timeoutMs, signal);
+    const bytes = parseReportBytes(res.body);
+    if (!bytes) {
+      throw new FusionError('parse', 'ExternalReportWSSService answered without report data (reportBytes missing).', {
+        hint: 'The helper report may be damaged. Run "Fusion SQL: Install / Repair Helper Report on Pod".'
+      });
+    }
+    return bytes;
+  }
+
   private async runReportAt(reportPath: string, encodedSql: string, signal?: AbortSignal): Promise<Buffer> {
     if (this.transport === 'rest') {
       return this.runReportRest(reportPath, encodedSql, signal);
+    }
+    if (this.transport === 'wss') {
+      return this.runReportWss(reportPath, encodedSql, signal);
     }
     try {
       const res = await this.soap('ReportService', (c) => runReportBody(reportPath, encodedSql, c), this.timeoutMs, signal);
@@ -160,12 +264,24 @@ export class FusionClient {
       }
       return bytes;
     } catch (e) {
-      // Token-based sign-in: some pods only accept bearer tokens on the REST endpoint.
-      if (e instanceof FusionError && (e.kind === 'auth' || e.kind === 'sso' || (e.kind === 'http' && e.status === 404)) && this.auth.method !== 'basic') {
-        this.log.info('SOAP endpoint rejected the token; trying the REST endpoint.');
-        const bytes = await this.runReportRest(reportPath, encodedSql, signal);
-        this.transport = 'rest';
-        return bytes;
+      // Token / browser-session SSO: try ExternalReportWSSService (SOAP 1.2) first, then REST v1.
+      const canFallback = e instanceof FusionError && (e.kind === 'auth' || e.kind === 'sso' || (e.kind === 'http' && e.status === 404)) && this.auth.method !== 'basic';
+      if (canFallback) {
+        this.log.info('SOAP v2 endpoint rejected the session; trying ExternalReportWSSService (SOAP 1.2).');
+        try {
+          const bytes = await this.runReportWss(reportPath, encodedSql, signal);
+          this.transport = 'wss';
+          return bytes;
+        } catch (eWss) {
+          const wssCanFallback = eWss instanceof FusionError && (eWss.kind === 'auth' || eWss.kind === 'sso' || (eWss.kind === 'http' && eWss.status === 404));
+          if (!wssCanFallback) {
+            throw eWss;
+          }
+          this.log.info('ExternalReportWSSService rejected the session; trying the REST endpoint.');
+          const bytes = await this.runReportRest(reportPath, encodedSql, signal);
+          this.transport = 'rest';
+          return bytes;
+        }
       }
       throw e;
     }
@@ -277,6 +393,27 @@ export class FusionClient {
         this.reportPath = undefined;
         throw e;
       }
+      // Oracle BI Publisher's PublicReportService often reports "does not have permission to run the report"
+      // when the helper report does not exist yet (or was deleted) in My Folders. Double-check the catalog!
+      if (
+        e instanceof FusionError &&
+        e.kind === 'permission' &&
+        /does not have permission to run the report/i.test(e.message) &&
+        this.reportPath
+      ) {
+        const exists = await this.objectExists(this.reportPath).catch(() => true);
+        if (!exists) {
+          this.log.info(`Helper report ${this.reportPath} does not exist; triggering install.`);
+          this.reportPath = undefined;
+          throw new FusionError('runtime-missing', 'The helper BI Publisher report is not installed on this pod yet.', { cause: e });
+        }
+        throw new FusionError('permission', e.message, {
+          status: e.status,
+          hint:
+            'The helper report exists but BI Publisher refused to run it. Right-click the connection and choose "Install / Repair Helper Report on Pod" to re-upload it with full BIAdministrator/BIAuthor/BIConsumer ACLs, or verify your user has a BI Consumer / BI Author role.',
+          cause: e
+        });
+      }
       // Paging wrapper cannot handle duplicate / unnamed columns: run the statement as it is.
       if (e instanceof FusionError && e.kind === 'oracle' && /ORA-00918|ORA-00957/.test(e.message) && offset === 0) {
         this.log.info('Paging wrapper rejected (duplicate column names); running the statement unwrapped.');
@@ -292,13 +429,140 @@ export class FusionClient {
     return { columns: table.columns, rows, hasMore, elapsedMs: Date.now() - started, unpaged };
   }
 
+  /**
+   * Execute a long-running SELECT asynchronously via BI Publisher's ScheduleReportWSSService,
+   * bypassing the ~500s synchronous gateway timeout.
+   */
+  async runSqlBackground(sql: string, opts: BackgroundRunOptions = {}): Promise<QueryPage & { jobId: string }> {
+    const prepared = prepareStatement(sql);
+    const started = Date.now();
+    if (!this.reportPath) {
+      const found = await this.discoverRuntime(opts.signal);
+      if (!found) {
+        throw new FusionError('runtime-missing', 'The helper BI Publisher report is not installed on this pod yet.');
+      }
+    }
+    const jobName = opts.jobName ?? `FusionSqlDev_${Date.now().toString(36)}`;
+    const encoded = encodeSql(prepared.sql);
+    opts.onProgress?.('Submitting background job…');
+    const submitRes = await this.soapWss('ScheduleReportWSSService', soap12Envelope('sch', SCH_WSS_NS, scheduleReportBody(this.reportPath!, encoded, jobName)), Math.min(this.timeoutMs, 120000), opts.signal);
+    const submittedJobId = parseScheduledJobId(submitRes.body);
+    if (!submittedJobId) {
+      throw new FusionError('parse', 'ScheduleReportWSSService did not return a job ID.');
+    }
+    this.log.info(`Background job submitted: #${submittedJobId}`);
+    opts.onProgress?.(`Job #${submittedJobId}: Queued`, submittedJobId);
+
+    const pollMs = opts.pollMs ?? 3000;
+    const deadline = Date.now() + (opts.maxWaitMs ?? 1800_000);
+    const sleepAbortable = (ms: number) =>
+      new Promise<void>((resolve, reject) => {
+        if (opts.signal?.aborted) {
+          reject(new FusionError('cancelled', 'Cancelled.'));
+          return;
+        }
+        const t = setTimeout(() => {
+          opts.signal?.removeEventListener('abort', onAbort);
+          resolve();
+        }, ms);
+        const onAbort = () => {
+          clearTimeout(t);
+          reject(new FusionError('cancelled', 'Cancelled.'));
+        };
+        opts.signal?.addEventListener('abort', onAbort, { once: true });
+      });
+
+    let jobInstanceId = submittedJobId;
+    const cancelRemote = async () => {
+      try {
+        await this.soapWss('ScheduleReportWSSService', soap12Envelope('sch', SCH_WSS_NS, cancelScheduleBody(jobInstanceId)), 15000);
+      } catch {
+        /* best-effort remote cancel */
+      }
+    };
+
+    try {
+      for (;;) {
+        if (opts.signal?.aborted) {
+          throw new FusionError('cancelled', 'Cancelled.');
+        }
+        if (Date.now() > deadline) {
+          throw new FusionError('timeout', `Background job #${submittedJobId} did not finish in time.`, {
+            hint: 'Increase "fusionSqlDev.background.maxWaitSeconds" or check BI Publisher Report Job History on the pod.'
+          });
+        }
+        // Discover the child job instance ID if it hasn't resolved yet
+        if (jobInstanceId === submittedJobId) {
+          try {
+            const instRes = await this.soapWss('ScheduleReportWSSService', soap12Envelope('sch', SCH_WSS_NS, getAllJobInstanceIdsBody(submittedJobId)), 30000, opts.signal);
+            const ids = parseJobInstanceIds(instRes.body);
+            if (ids.length > 0) {
+              jobInstanceId = ids[0];
+            }
+          } catch (e) {
+            if (e instanceof FusionError && ['auth', 'sso', 'cancelled'].includes(e.kind)) {
+              throw e;
+            }
+          }
+        }
+        const histRes = await this.soapWss('ScheduleReportWSSService', soap12Envelope('sch', SCH_WSS_NS, getReportHistoryInfoBody(jobInstanceId)), 30000, opts.signal);
+        const hist = parseJobHistoryStatus(histRes.body);
+        const st = hist.status.toUpperCase();
+        opts.onProgress?.(`Job #${jobInstanceId}: ${hist.status || 'Running'}`, jobInstanceId);
+
+        if (st === 'S' || st === 'SUCCESS' || st === 'SUCCEEDED') {
+          const outputId = hist.outputIds[0] ?? jobInstanceId;
+          opts.onProgress?.(`Job #${jobInstanceId}: Downloading result…`, jobInstanceId);
+          const docRes = await this.soapWss('ScheduleReportWSSService', soap12Envelope('sch', SCH_WSS_NS, getDocumentDataBody(outputId)), this.timeoutMs, opts.signal);
+          const bytes = parseDocumentData(docRes.body);
+          if (!bytes) {
+            throw new FusionError('parse', `Background job #${jobInstanceId} succeeded but returned no document data.`);
+          }
+          const table = parseDelimited(bytes, '|');
+          return { columns: table.columns, rows: table.rows, hasMore: false, elapsedMs: Date.now() - started, unpaged: true, jobId: jobInstanceId };
+        }
+        if (st === 'F' || st === 'FAILED' || st === 'ERROR' || st === 'E') {
+          throw new FusionError('oracle', hist.statusDetail || `Background job #${jobInstanceId} failed on BI Publisher.`);
+        }
+        if (st === 'C' || st === 'CANCELED' || st === 'CANCELLED') {
+          throw new FusionError('cancelled', `Background job #${jobInstanceId} was cancelled on BI Publisher.`);
+        }
+        await sleepAbortable(pollMs);
+      }
+    } catch (e) {
+      if (e instanceof FusionError && e.kind === 'cancelled') {
+        void cancelRemote();
+      }
+      throw e;
+    }
+  }
+
   // ---------------------------------------------------------------------------------------------
   // catalog / install
   // ---------------------------------------------------------------------------------------------
 
+  /** Call CatalogService (SOAP 1.1), falling back to ExternalReportWSSService (SOAP 1.2) on SSO/JWT rejection. */
+  private async catalogSoap(v2Inner: (c: BodyCredentials | null) => string, wssInner: string, timeoutMs: number, signal?: AbortSignal): Promise<HttpResponse> {
+    if (this.catalogTransport === 'wss') {
+      return this.soapWss('ExternalReportWSSService', soap12Envelope('pub', PUB_WSS_NS, wssInner), timeoutMs, signal);
+    }
+    try {
+      return await this.soap('CatalogService', v2Inner, timeoutMs, signal);
+    } catch (e) {
+      const canFallback = e instanceof FusionError && (e.kind === 'auth' || e.kind === 'sso' || (e.kind === 'http' && e.status === 404)) && this.auth.method !== 'basic';
+      if (canFallback) {
+        this.log.info('SOAP v2 CatalogService rejected the session; trying ExternalReportWSSService (SOAP 1.2).');
+        const res = await this.soapWss('ExternalReportWSSService', soap12Envelope('pub', PUB_WSS_NS, wssInner), timeoutMs, signal);
+        this.catalogTransport = 'wss';
+        return res;
+      }
+      throw e;
+    }
+  }
+
   private async folderExists(folder: string): Promise<'yes' | 'no'> {
     try {
-      await this.soap('CatalogService', (c) => getFolderContentsBody(folder, c), 30000);
+      await this.catalogSoap((c) => getFolderContentsBody(folder, c), getFolderContentsWssBody(folder), 30000);
       return 'yes';
     } catch (e) {
       if (e instanceof FusionError && ['auth', 'sso', 'network', 'tls', 'timeout', 'cancelled'].includes(e.kind)) {
@@ -309,11 +573,27 @@ export class FusionClient {
   }
 
   async objectExists(path: string): Promise<boolean> {
+    // When using SOAP 1.2 WSS (SSO/JWT), objectExist is a single direct check.
+    if (this.catalogTransport === 'wss' || this.transport === 'wss') {
+      try {
+        const res = await this.soapWss('ExternalReportWSSService', soap12Envelope('pub', PUB_WSS_NS, objectExistWssBody(path)), 30000);
+        const parsed = parseObjectExist(res.body);
+        if (parsed !== undefined) {
+          this.catalogTransport = 'wss';
+          return parsed;
+        }
+      } catch (e) {
+        if (e instanceof FusionError && ['network', 'tls', 'timeout', 'cancelled'].includes(e.kind)) {
+          throw e;
+        }
+        /* fall through to getFolderContents */
+      }
+    }
     const idx = path.lastIndexOf('/');
     const parent = idx > 0 ? path.slice(0, idx) : '/';
     const name = path.slice(idx + 1);
     try {
-      const res = await this.soap('CatalogService', (c) => getFolderContentsBody(parent, c), 30000);
+      const res = await this.catalogSoap((c) => getFolderContentsBody(parent, c), getFolderContentsWssBody(parent), 30000);
       return parseFolderFileNames(res.body).includes(name);
     } catch (e) {
       if (e instanceof FusionError && ['auth', 'sso', 'network', 'tls', 'timeout', 'cancelled'].includes(e.kind)) {
@@ -325,7 +605,7 @@ export class FusionClient {
 
   private async ensureFolder(folder: string): Promise<void> {
     try {
-      await this.soap('CatalogService', (c) => createFolderBody(folder, c), 30000);
+      await this.catalogSoap((c) => createFolderBody(folder, c), createFolderWssBody(folder), 30000);
     } catch (e) {
       if (e instanceof FusionError && ['auth', 'sso', 'network', 'tls', 'timeout', 'cancelled'].includes(e.kind)) {
         throw e;
@@ -337,13 +617,13 @@ export class FusionClient {
 
   private async upload(path: string, type: 'xdmz' | 'xdoz', zipped: Buffer, retried = false): Promise<void> {
     try {
-      await this.soap('CatalogService', (c) => uploadObjectBody(path, type, zipped, c), 120000);
+      await this.catalogSoap((c) => uploadObjectBody(path, type, zipped, c), uploadObjectWssBody(path, type, zipped), 120000);
     } catch (e) {
       // Some releases refuse to overwrite: delete the old object once and try again.
       if (!retried && e instanceof FusionError && /exist|already|overwrit|duplicate/i.test(e.message)) {
         this.log.info(`Upload refused because ${path} exists; replacing it.`);
         try {
-          await this.soap('CatalogService', (c) => deleteObjectBody(path, c), 30000);
+          await this.catalogSoap((c) => deleteObjectBody(path, c), deleteObjectWssBody(path), 30000);
         } catch {
           /* the retry below reports the real problem */
         }
@@ -353,7 +633,7 @@ export class FusionClient {
         throw new FusionError('permission', `Could not upload ${path}: ${e.message}`, {
           hint:
             (type === 'xdoz' ? 'The data model was uploaded, but BI Publisher refused to create the REPORT: creating reports needs a BI authoring role (for example "BI Author Role" / "BI Administrator Role"), which is separate from owning the folder - even for a Fusion system administrator. ' : 'BI Publisher refused this upload. ') +
-            'Quickest workaround: run "Fusion SQL: Save Helper Catalog File…", then in BI Publisher open Catalog → My Folders → Upload and select that file (you already did this successfully before). Afterwards Test Connection finds it. ' +
+            'Quickest workaround: run "Fusion SQL: Save Helper Catalog File…", then in BI Publisher open Catalog → My Folders → Unarchive and select FusionSqlDevHelper.catalog. Afterwards Test Connection finds it. ' +
             'Or assign yourself a BI authoring role in the Security Console and retry.',
           status: e.status,
           code: 'SECURITY_VIOLATION',
@@ -380,13 +660,17 @@ export class FusionClient {
     try {
       await this.deployZips(art.rootFolder, art.versionFolder, art.dmPath, art.reportPath, art.dataModelZip, art.reportZip);
     } catch (e) {
-      // The SOAP CatalogService refuses to create reports for some users ("Security violation").
-      // The Catalog page's Unarchive goes through BI Presentation Services (saw.dll) instead, which
-      // those same users are allowed to use - do exactly what the browser does.
-      if (!(e instanceof FusionError && e.code === 'SECURITY_VIOLATION')) {
+      // The SOAP CatalogService refuses to create reports for some users ("Security violation"),
+      // or rejects SSO sessions on v2/WSS catalog endpoints. When we have a browser cookie (or hit SECURITY_VIOLATION),
+      // automatically unarchive our ACL-enriched .catalog directly into My Folders via Presentation Services (saw.dll).
+      const hasCookie = !!this.auth.cookie?.();
+      const canUnarchive =
+        e instanceof FusionError &&
+        (e.code === 'SECURITY_VIOLATION' || (hasCookie && (e.kind === 'permission' || e.kind === 'auth' || e.kind === 'sso')));
+      if (!canUnarchive) {
         throw e;
       }
-      this.log.info('Report upload refused (Security violation); trying Catalog Unarchive (saw.dll) instead.');
+      this.log.info(`SOAP upload failed (${e.message}); trying Catalog Unarchive (saw.dll) into ${this.unarchiveTarget()}.`);
       try {
         await this.unarchiveCatalog(buildCatalogFile(spec, this.auth.username), signal);
       } catch (e2) {
@@ -397,35 +681,114 @@ export class FusionClient {
     return this.verifyInstalled(art.reportPath, signal);
   }
 
-  /** The catalog folder `Unarchive` extracts into: "/~jdoe" is "/users/jdoe" in Presentation Services. */
+  /** The catalog folder `Unarchive` extracts into: "/~jdoe" -> "/users/jdoe", "/Custom" -> "/shared/Custom". */
   private unarchiveTarget(): string {
-    return this.catalogRoot.replace(/^\/~/, '/users/');
+    if (this.catalogRoot.startsWith('/~')) {
+      return this.catalogRoot.replace(/^\/~/, '/users/');
+    }
+    if (this.catalogRoot.startsWith('/Custom')) {
+      return `/shared${this.catalogRoot}`;
+    }
+    return this.catalogRoot;
+  }
+
+  /** Merge Set-Cookie headers into an existing Cookie header string (later values override earlier ones by name). */
+  private static mergeCookies(existing: string | undefined, setCookies: string[] | undefined): string {
+    const jar = new Map<string, string>();
+    const add = (raw: string) => {
+      for (const part of raw.split(';')) {
+        const eq = part.indexOf('=');
+        if (eq > 0) {
+          jar.set(part.slice(0, eq).trim(), part.slice(eq + 1).trim());
+        }
+      }
+    };
+    if (existing) {
+      add(existing);
+    }
+    for (const sc of setCookies ?? []) {
+      add(sc.split(';')[0] ?? '');
+    }
+    return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join('; ');
+  }
+
+  /**
+   * Fetch real anti-CSRF `_scid` and BI Presentation Services session cookies (`ORA_BIPS_LBINFO`, `SAW_SESSION`)
+   * from `/analytics/saw.dll?Catalog`, following up to 5 same-origin redirects.
+   */
+  private async fetchPresentationScid(authHeaders: Record<string, string>, baseCookie: string | undefined, signal?: AbortSignal): Promise<{ scid: string; cookie: string }> {
+    const fallback = 'now' + Math.random().toString(36).slice(2, 14);
+    let cookie = baseCookie ?? '';
+    let url = `${this.baseUrl}/analytics/saw.dll?Catalog`;
+    const origin = new URL(this.baseUrl).origin;
+    try {
+      for (let hop = 0; hop < 5; hop++) {
+        const headers: Record<string, string> = { ...authHeaders, Accept: 'text/html,*/*' };
+        if (cookie) {
+          headers['Cookie'] = cookie;
+        }
+        const res = await httpRequest({ url, method: 'GET', headers, timeoutMs: 20000, signal, allowInsecureTls: this.insecure });
+        cookie = FusionClient.mergeCookies(cookie, res.headers['set-cookie']);
+        if (res.status >= 300 && res.status < 400 && res.headers['location']) {
+          const next = new URL(String(res.headers['location']), url);
+          if (next.origin !== origin) {
+            break; // redirected off-pod to external IdP
+          }
+          url = next.toString();
+          continue;
+        }
+        if (res.status === 200 && res.body) {
+          const m =
+            /[?&]_scid=([A-Za-z0-9_-]{8,64})/i.exec(res.body) ??
+            /_scid['"]?\s*[:=]\s*['"]([A-Za-z0-9_-]{8,64})['"]/i.exec(res.body) ??
+            /name=["']_scid["'][^>]*value=["']([^"']+)["']/i.exec(res.body);
+          if (m?.[1]) {
+            this.log.debug(`Fetched real Presentation Services _scid (${m[1].length} chars)`);
+            return { scid: m[1], cookie };
+          }
+        }
+        break;
+      }
+      return { scid: fallback, cookie };
+    } catch {
+      return { scid: fallback, cookie };
+    }
   }
 
   /** POST a .catalog archive to the same endpoint the Catalog page's Unarchive dialog uses. */
   async unarchiveCatalog(archive: Buffer, signal?: AbortSignal): Promise<void> {
+    const authHeaders: Record<string, string> = {};
+    const baseCookie = this.auth.cookie?.();
+    // BI Presentation Services (saw.dll) expects browser session cookies on SSO pods; sending an OAuth/JWT
+    // Authorization: Bearer header alongside cookies can cause OHS/WebGate to reject the request.
+    if (!baseCookie || this.auth.method === 'basic') {
+      const authz = await this.auth.authorization(signal);
+      if (authz) {
+        authHeaders['Authorization'] = authz;
+      }
+    }
+    const { scid, cookie } = await this.fetchPresentationScid(authHeaders, baseCookie, signal);
     const boundary = '----FusionSqlDev' + Math.random().toString(16).slice(2);
     const field = (name: string, value: string) => Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`);
     const body = Buffer.concat([
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="archive"; filename="FusionSqlDevHelper.catalog"\r\nContent-Type: application/octet-stream\r\n\r\n`),
       archive,
       Buffer.from('\r\n'),
-      field('replReadOnly', 'None'),
-      field('repl', 'none'),
-      field('aclReadOnly', 'Inherit'),
-      field('acl', 'inherit'),
+      field('replReadOnly', 'All'),
+      field('repl', 'all'),
+      field('aclReadOnly', 'Preserve'),
+      field('acl', 'preserve'),
       field('Folder', this.unarchiveTarget()),
       field('ajaxType', 'iframe'),
       field('urlGenerator', 'qualified'),
-      field('_scid', 'now' + Math.random().toString(36).slice(2, 14)),
+      field('_scid', scid),
       Buffer.from(`--${boundary}--\r\n`)
     ]);
-    const headers: Record<string, string> = { 'Content-Type': `multipart/form-data; boundary=${boundary}`, Accept: 'text/html,*/*' };
-    const authz = await this.auth.authorization(signal);
-    if (authz) {
-      headers['Authorization'] = authz;
-    }
-    const cookie = this.auth.cookie?.();
+    const headers: Record<string, string> = {
+      ...authHeaders,
+      'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      Accept: 'text/html,*/*'
+    };
     if (cookie) {
       headers['Cookie'] = cookie;
     }
@@ -482,7 +845,7 @@ export class FusionClient {
     const paths = runtimePaths({ catalogRoot: this.catalogRoot, dataSource: this.dataSource });
     for (const p of [paths.reportPath, paths.dmPath]) {
       try {
-        await this.soap('CatalogService', (c) => deleteObjectBody(p, c), 30000);
+        await this.catalogSoap((c) => deleteObjectBody(p, c), deleteObjectWssBody(p), 30000);
       } catch (e) {
         this.log.debug(`deleteObject ${p}: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -498,15 +861,25 @@ export class FusionClient {
   async test(install: () => Promise<boolean>, signal?: AbortSignal): Promise<TestResult> {
     const started = Date.now();
     const done = (r: Omit<TestResult, 'latencyMs'>): TestResult => ({ ...r, latencyMs: Date.now() - started });
+    let catalogAuthErr: FusionError | undefined;
     try {
       await this.folderExists(this.catalogRoot);
     } catch (e) {
       const err = e instanceof FusionError ? e : new FusionError('network', String(e));
-      return done({ ok: false, authenticated: false, runtimeReady: false, message: err.message, error: err });
+      // For SSO/Bearer connections, CatalogService SOAP may be blocked even when ExternalReportWSSService / REST works.
+      // Let discoverRuntime() try WSS/REST before declaring authentication failed.
+      if (this.auth.method !== 'basic' && (err.kind === 'auth' || err.kind === 'sso')) {
+        catalogAuthErr = err;
+      } else {
+        return done({ ok: false, authenticated: false, runtimeReady: false, message: err.message, error: err });
+      }
     }
     try {
       let path = await this.discoverRuntime(signal);
       if (!path) {
+        if (catalogAuthErr) {
+          return done({ ok: false, authenticated: false, runtimeReady: false, message: catalogAuthErr.message, error: catalogAuthErr });
+        }
         if (await install()) {
           path = await this.installRuntime(signal);
         } else {

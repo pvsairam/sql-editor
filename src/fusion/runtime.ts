@@ -16,6 +16,7 @@ import { xmlEscape } from './xml';
 export const RUNTIME_VERSION = 2;
 export const RUNTIME_FOLDER = 'FusionSqlDev';
 export const DEFAULT_DATA_SOURCE = 'ApplicationDB_FSCM';
+export const SHARED_CATALOG_ROOT = '/Custom';
 
 export interface RuntimeSpec {
   /** Catalog folder that will contain the helper, normally "/~<username>". */
@@ -48,9 +49,14 @@ export function runtimePaths(spec: RuntimeSpec): Pick<RuntimeArtifacts, 'rootFol
   return { rootFolder, versionFolder, dmPath: `${versionFolder}/dm.xdm`, reportPath: `${versionFolder}/csv.xdo` };
 }
 
-/** Where earlier tools (fusion-query, Fusion SQL DEV 1.x) were told to import the catalog file. */
+/** Where earlier tools (fusion-query, Fusion SQL DEV 1.x) or a shared team deployment put the helper. */
 export function legacyReportPaths(catalogRoot: string): string[] {
-  return [`${catalogRoot}/FusionQuery/v1/csv.xdo`, '/Custom/FusionQuery/Proxy/v1/csv.xdo'];
+  const shared = `${SHARED_CATALOG_ROOT}/${RUNTIME_FOLDER}/v${RUNTIME_VERSION}/csv.xdo`;
+  const list = [`${catalogRoot}/FusionQuery/v1/csv.xdo`, '/Custom/FusionQuery/Proxy/v1/csv.xdo'];
+  if (!catalogRoot.startsWith(SHARED_CATALOG_ROOT)) {
+    list.unshift(shared);
+  }
+  return list;
 }
 
 function metaXml(entries: Record<string, string>): string {
@@ -126,22 +132,22 @@ const SAMPLE_XML = `<?xml version = '1.0' encoding = 'utf-8'?>
 
 export function reportXml(dmPath: string): string {
   return `<?xml version = '1.0' encoding = 'utf-8'?>
-<report xmlns="http://xmlns.oracle.com/oxp/xmlp" xmlns:xsd="http://wwww.w3.org/2001/XMLSchema" version="2.0" dataModel="true" useBipParameters="true" producerName="fin-financialCommon" parameterVOName="" parameterTaskFlow="" customDataControl="" cachePerUser="true" cacheSmartRefresh="false" cacheUserRefresh="false">
+<report xmlns="http://xmlns.oracle.com/oxp/xmlp" xmlns:xsd="http://wwww.w3.org/2001/XMLSchema" version="2.0" dataModel="true" useBipParameters="true" producerName="fin-financialCommon" parameterVOName="" parameterTaskFlow="" customDataControl="" cachePerUser="false" cacheSmartRefresh="false" cacheUserRefresh="false">
    <dataModel url="${xmlEscape(dmPath)}"/>
-   <description/>
-   <property name="showControls" value="false"/>
-   <property name="online" value="false"/>
-   <property name="openLinkInNewWindow" value="false"/>
+   <description><![CDATA[Fusion SQL DEV helper report]]></description>
+   <property name="showControls" value="true"/>
+   <property name="online" value="true"/>
+   <property name="openLinkInNewWindow" value="true"/>
    <property name="autoRun" value="false"/>
-   <property name="cacheDocument" value="true"/>
-   <property name="showReportLinks" value="false"/>
+   <property name="cacheDocument" value="false"/>
+   <property name="showReportLinks" value="true"/>
    <property name="asynchronousRun" value="false"/>
    <property name="priority" value="normal"/>
    <property name="sendOutputAsUrl" value="insLevel"/>
    <property name="cacheDuration" value="30"/>
-   <property name="controledByExtApp" value="false"/>
+   <property name="controledByExtApp" value="true"/>
    <property name="ignoreEmailDomainRestrictions" value="false"/>
-   <property name="saveXMLForRepublishing" value="false"/>
+   <property name="saveXMLForRepublishing" value="true"/>
    <property name="disableMakeOutputPublic" value="false"/>
    <parameters paramPerLine="3" style="parameterLocation:in-horizontal;promptLocation:side;"/>
    <templates default="Default">
@@ -245,19 +251,40 @@ export function buildCatalogArchive(spec: RuntimeSpec): Buffer {
 export function buildCatalogFile(spec: RuntimeSpec, owner: string): Buffer {
   const paths = runtimePaths(spec);
   const sha = (b: Buffer) => require('crypto').createHash('sha256').update(b).digest('hex') as string;
-  const orig = (p: string) => p.replace(/^\/~/, '/users/');
-  const build = 'Build 20.3.1.16.1';
+  const orig = (p: string) => {
+    if (p.startsWith('/~')) {
+      return p.replace(/^\/~/, '/users/');
+    }
+    if (p.startsWith('/Custom')) {
+      return `/shared${p}`;
+    }
+    return p;
+  };
+  const build = '20.3.1.18.1';
   const now = String(Date.now());
+  const ownerId = { AccountType: 0, ID: owner };
+  const acl = {
+    Members: [
+      { Permissions: 65535, PersistentId: { AccountType: 4, ID: 'BIAdministrator' } },
+      { Permissions: 65535, PersistentId: { AccountType: 4, ID: 'BIAuthor' } },
+      { Permissions: 3, PersistentId: { AccountType: 4, ID: 'BIConsumer' } },
+      ...(owner ? [{ Permissions: 65535, PersistentId: ownerId }] : [])
+    ]
+  };
   const meta = (path: string, type: number, props: Record<string, string>, extra?: Record<string, unknown>) =>
     Buffer.from(
       JSON.stringify({
+        ACL: acl,
         Attributes: type === 4 ? 8 : 0,
-        CatalogArchiveOptions: 0,
+        CatalogArchiveOptions: 2,
+        CreatorId: ownerId,
         InternalProperties: {},
         ItemName: path.slice(path.lastIndexOf('/') + 1),
         ItemType: type,
+        LastModifierId: ownerId,
         ObjectSignature: '',
         OriginalPath: orig(path),
+        OwnerId: ownerId,
         WCProperties: { Build: build, 'bip:AUTHOR': owner, ...props },
         ...extra
       }),
@@ -296,7 +323,7 @@ export function buildCatalogFile(spec: RuntimeSpec, owner: string): Buffer {
   const T = { 'bip:OBJ_TYPE': 'Folder', 'bip:MODIFIED': now };
   item(meta(paths.rootFolder, 1, T));
   item(meta(paths.versionFolder, 1, T));
-  item(meta(paths.reportPath, 1, { 'bip:MODIFIED': now, 'bip:OBJ_TYPE': 'ReportItem', 'bip:propertyMap': '0', compositeSignature: '.xdo' }));
+  item(meta(paths.reportPath, 1, { 'bip:MODIFIED': now, 'bip:OBJ_TYPE': 'ReportItem', 'bip:propertyMap': '3', compositeSignature: '.xdo' }));
   item(meta(paths.dmPath, 1, { 'bip:MODIFIED': now, 'bip:OBJ_TYPE': 'ReportItem', compositeSignature: '.xdm' }));
   const child = (parent: string, name: string, sig: string, data: Buffer, hash = false) => {
     const m = meta(`${parent}/${name}`, 4, hash ? { 'bip:contentHashCode': sha(data) } : {}, { ObjectSignature: sig });

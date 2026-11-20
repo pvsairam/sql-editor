@@ -4,7 +4,7 @@ import { AuthSession, Logger } from '../fusion/types';
 import { Connection } from '../model';
 import { ConnectionStore } from './ConnectionStore';
 import { OAuthClient, TokenStore, jwtExpiry } from '../auth/oauth';
-import { BasicSession, OAuthSession, TokenSession } from '../auth/sessions';
+import { BasicSession, BrowserSession, BrowserSessionData, OAuthSession, TokenSession, parseBrowserSession, serializeBrowserSession } from '../auth/sessions';
 import { settings } from '../config';
 import { FusionClient } from '../fusion/bip';
 import { browserLogin, findBrowser } from '../auth/browserLogin';
@@ -115,14 +115,15 @@ export class ConnectionManager {
         return new OAuthSession(c.username, o);
       }
       case 'browser': {
-        const cookie = await this.store.getPasted(c.id);
-        if (!cookie) {
+        let data = parseBrowserSession(await this.store.getPasted(c.id));
+        if (!data) {
           if (!interactive) {
             throw new FusionError('auth', 'You are not signed in.', { hint: 'Right-click the connection and choose "Sign In (SSO)…".' });
           }
           await this.signIn(c);
+          data = parseBrowserSession(await this.store.getPasted(c.id));
         }
-        return new TokenSession(c.username, 'cookie', (await this.store.getPasted(c.id)) ?? '');
+        return new BrowserSession(c.username, data ?? { cookie: '' });
       }
       case 'token': {
         let raw = await this.store.getPasted(c.id);
@@ -162,11 +163,11 @@ export class ConnectionManager {
 
   async signIn(c: Connection): Promise<boolean> {
     if (c.auth === 'browser') {
-      const cookie = await this.captureBrowserSession(c);
-      await this.store.setPasted(c.id, cookie);
+      const session = await this.captureBrowserSession(c);
+      await this.store.setPasted(c.id, serializeBrowserSession(session));
       this.invalidate(c.id);
       this.emitter.fire();
-      void vscode.window.setStatusBarMessage(`Signed in to ${c.name}`, 4000);
+      void vscode.window.setStatusBarMessage(`Signed in to ${c.name}${session.bearerToken ? ' (Fusion JWT captured)' : ''}`, 4000);
       return true;
     }
     if (c.auth !== 'oauth') {
@@ -185,11 +186,11 @@ export class ConnectionManager {
     return true;
   }
 
-  /** Open the user's browser on the pod, wait for SSO to finish and return the session Cookie header. */
-  async captureBrowserSession(c: Connection): Promise<string> {
+  /** Open the user's browser on the pod, wait for SSO (including Oracle Authenticator MFA) to finish and return the captured session. */
+  async captureBrowserSession(c: Connection): Promise<BrowserSessionData> {
     const exe = findBrowser(c.browser?.kind ?? 'auto', c.browser?.path);
-    const verifyClient = (cookie: string) =>
-      new FusionClient({ baseUrl: c.url, auth: new TokenSession(c.username, 'cookie', cookie), catalogRoot: c.catalogRoot, allowInsecureTls: c.allowInsecureTls, log: this.log, timeoutMs: 30000 });
+    const verifyClient = (session: BrowserSessionData) =>
+      new FusionClient({ baseUrl: c.url, auth: new BrowserSession(c.username, session), catalogRoot: c.catalogRoot, allowInsecureTls: c.allowInsecureTls, log: this.log, timeoutMs: 30000 });
     return vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `Sign in to ${c.name} in the browser window that just opened…`, cancellable: true },
       async (_p, token) => {
@@ -201,12 +202,20 @@ export class ConnectionManager {
           profileDir: path.join(this.storageDir || os.tmpdir(), 'browser-profiles', c.id),
           signal: ac.signal,
           log: this.log,
-          verify: async (cookie) => {
+          verify: async (session) => {
             try {
-              await verifyClient(cookie).objectExists(`${c.catalogRoot ?? `/~${c.username}`}/__fusion_sql_probe__`);
+              // If we already captured a real Fusion JWT from /fscmRestApi/tokenrelay on the pod,
+              // the user has definitively completed SSO + MFA. Still probe BI Publisher to confirm.
+              const client = verifyClient(session);
+              await client.objectExists(`${c.catalogRoot ?? `/~${c.username}`}/__fusion_sql_probe__`);
               return true;
             } catch (e) {
-              return !(e instanceof FusionError && (e.kind === 'auth' || e.kind === 'sso'));
+              // Genuine BI Publisher catalog/permission faults prove authentication succeeded.
+              // Transient network/timeout/http/auth/sso errors must return false so the browser stays open.
+              if (e instanceof FusionError && (e.kind === 'runtime-missing' || e.kind === 'permission')) {
+                return true;
+              }
+              return false;
             }
           }
         });
@@ -270,8 +279,15 @@ export class ConnectionManager {
         }
       }
       case 'browser': {
-        const raw = await this.store.getPasted(c.id);
-        return `${c.username} · SSO · ${raw ? 'signed in' : 'signed out'}`;
+        const parsed = parseBrowserSession(await this.store.getPasted(c.id));
+        if (!parsed) {
+          return `${c.username} · SSO · signed out`;
+        }
+        if (parsed.bearerToken && parsed.tokenExpiresAt) {
+          const expired = parsed.tokenExpiresAt < Date.now();
+          return `${c.username} · SSO · ${expired ? 'session (JWT expired)' : `JWT until ${new Date(parsed.tokenExpiresAt).toLocaleTimeString()}`}`;
+        }
+        return `${c.username} · SSO · signed in`;
       }
       case 'token': {
         const raw = await this.store.getPasted(c.id);

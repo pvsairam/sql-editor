@@ -65,4 +65,5 @@ export type FromWebview =
   | { type: 'pin'; runId: string; pinned: boolean }
   | { type: 'set-fetch-size'; value: number }
   | { type: 'switch-connection'; id?: string }
+  | { type: 'compare' }
   | { type: 'log'; text: string };
